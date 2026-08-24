@@ -1,0 +1,8 @@
+{
+  "name": "streakline",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Let-it-ride parlays for DreamDEX Event Contracts on Somnia",
+  "workspaces": ["keeper", "web", "shared"],
+  "engines": { "node": ">=20" }
+}
