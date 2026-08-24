@@ -41,16 +41,19 @@ contract StreakVaultForkTest is Test {
         uint256[] memory caps = new uint256[](2);
         caps[0] = 990000; // 0.99 — cap loose on purpose; this test proves plumbing, not pricing
         caps[1] = 990000;
+        bytes32[] memory tags = new bytes32[](2);
+        tags[0] = bytes32("BTC:86400");
+        tags[1] = bytes32("BTC:86400");
 
         vm.prank(user);
-        uint256 runId = vault.createRun(dirs, caps, 100e6);
+        uint256 runId = vault.createRun(dirs, caps, tags, 100e6);
         assertEq(vault.getRun(runId).balance, 100e6);
 
         // The critical assertion of the whole architecture: a CONTRACT can place
         // an IOC order on the pool with a plain ERC-20 approve, and receives the
         // outcome tokens itself.
         vm.prank(keeper);
-        vault.executeLeg(runId, marketId, priceYes, 20e6, bytes32("ETH-300s"));
+        vault.executeLeg(runId, marketId, priceYes, 20e6);
 
         StreakVault.Run memory r = vault.getRun(runId);
         assertTrue(r.balance < 100e6, "collateral was spent");
@@ -62,9 +65,11 @@ contract StreakVaultForkTest is Test {
         dirs[0] = vault.UP();
         uint256[] memory caps = new uint256[](1);
         caps[0] = 990000;
+        bytes32[] memory tags = new bytes32[](1);
+        tags[0] = bytes32("BTC:86400");
 
         vm.startPrank(user);
-        uint256 runId = vault.createRun(dirs, caps, 50e6);
+        uint256 runId = vault.createRun(dirs, caps, tags, 50e6);
         uint256 before = ITestUSDC(TUSDC).balanceOf(user);
         vault.cancelRun(runId);
         assertEq(ITestUSDC(TUSDC).balanceOf(user) - before, 50e6);

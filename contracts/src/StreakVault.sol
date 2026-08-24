@@ -40,6 +40,7 @@ contract StreakVault {
         uint8 legIndex;
         uint8[] directions; // UP/DOWN per leg
         uint256[] maxPrice; // per-leg cap, in the leg's own outcome price (raw units)
+        bytes32[] seriesTags; // per-leg series ("BTC:900"), declared by the user at creation
         uint256 balance; // escrowed collateral budget (raw units)
         // Current leg binding (set by executeLeg):
         bytes32 marketId;
@@ -62,7 +63,7 @@ contract StreakVault {
     uint256 public nextRunId;
     mapping(uint256 => Run) private runs;
 
-    event RunCreated(uint256 indexed runId, address indexed owner, uint8 legs, uint256 stake);
+    event RunCreated(uint256 indexed runId, address indexed owner, uint8 legs, uint256 stake, bytes32[] seriesTags);
     event LegExecuted(
         uint256 indexed runId, uint8 indexed legIndex, bytes32 marketId, uint256 filled, uint256 cost, bytes32 legTag
     );
@@ -109,12 +110,18 @@ contract StreakVault {
     // ---------------------------------------------------------------- user
 
     /// Stake once and declare the whole run: directions[i] is the call for leg i,
-    /// maxPrice[i] the worst acceptable probability (own-outcome terms, raw units).
-    function createRun(uint8[] calldata directions, uint256[] calldata maxPrice, uint256 stake)
-        external
-        returns (uint256 runId)
-    {
-        if (directions.length == 0 || directions.length > 10 || directions.length != maxPrice.length) {
+    /// maxPrice[i] the worst acceptable probability (own-outcome terms, raw units),
+    /// seriesTags[i] the series the leg must trade ("BTC:900" = BTC, 15-minute).
+    function createRun(
+        uint8[] calldata directions,
+        uint256[] calldata maxPrice,
+        bytes32[] calldata seriesTags,
+        uint256 stake
+    ) external returns (uint256 runId) {
+        if (
+            directions.length == 0 || directions.length > 10 || directions.length != maxPrice.length
+                || directions.length != seriesTags.length
+        ) {
             revert BadLegs();
         }
         for (uint256 i = 0; i < maxPrice.length; i++) {
@@ -129,8 +136,9 @@ contract StreakVault {
         r.state = RunState.Open;
         r.directions = directions;
         r.maxPrice = maxPrice;
+        r.seriesTags = seriesTags;
         r.balance = stake;
-        emit RunCreated(runId, msg.sender, uint8(directions.length), stake);
+        emit RunCreated(runId, msg.sender, uint8(directions.length), stake, seriesTags);
     }
 
     /// Cancel between legs (never while a position is live) and refund the escrow.
@@ -161,12 +169,12 @@ contract StreakVault {
     /// Bind the run's next leg to a live window and take the position with the
     /// full escrowed budget. `priceYes` is the IOC cap in YES terms; the vault
     /// re-derives the own-outcome price and enforces the user's per-leg cap.
-    function executeLeg(uint256 runId, bytes32 marketId, uint256 priceYes, uint256 quantity, bytes32 legTag)
-        external
-        onlyKeeper
-    {
+    /// The window's series is the one the user declared for this leg — the
+    /// keeper picks the window, never the series.
+    function executeLeg(uint256 runId, bytes32 marketId, uint256 priceYes, uint256 quantity) external onlyKeeper {
         Run storage r = runs[runId];
         if (r.state != RunState.Open) revert BadState();
+        bytes32 legTag = r.seriesTags[r.legIndex];
 
         MarketRecord memory m = module.markets(marketId);
         if (m.originVenueId != venueId || m.collateral != address(collateral)) revert WrongVenue();
@@ -176,7 +184,7 @@ contract StreakVault {
         if (ownPrice > r.maxPrice[r.legIndex]) revert PriceCapExceeded();
 
         // The pool pulls collateral from the caller; approve exactly the worst case.
-        uint256 maxCost = (quantity * ownPrice) / ONE + 1;
+        uint256 maxCost = (quantity * ownPrice + ONE - 1) / ONE;
         require(maxCost <= r.balance, "over budget");
         collateral.approve(m.pool, maxCost);
 
