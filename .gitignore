@@ -9,3 +9,7 @@ reference/
 spike/
 .next/
 *.log
+
+# local notes, never published
+me.md
+MEMORY.md
