@@ -7,7 +7,7 @@ import { useGSAP } from "@gsap/react";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { SmoothScroll } from "./SmoothScroll";
 import { HowItWorks } from "./HowItWorks";
-import { HeroPair } from "./HeroPair";
+import { HeroWindow } from "./HeroWindow";
 import { Floor } from "./Floor";
 import { HouseLogo } from "./HouseLogo";
 
@@ -78,15 +78,15 @@ export function Landing() {
       mm.add("(prefers-reduced-motion: reduce)", () => {
         gsap.set(".land-intro", { autoAlpha: 0, display: "none" });
         gsap.set(
-          ".land-nav, .land-hero-copy > *, .pair, .land-cta, .land-tape",
+          ".land-nav, .land-hero-copy > *, .win, .land-cta, .land-tape",
           { autoAlpha: 1, y: 0, x: 0, rotation: 0, clearProps: "transform" },
         );
       });
 
       mm.add("(prefers-reduced-motion: no-preference)", () => {
         gsap.set([".land-nav", ".land-cta"], { autoAlpha: 0 });
-        gsap.set(".pair", { y: 28, autoAlpha: 0 });
-        gsap.set(".pair-svg, .pair-cap, .pair-ledger", { y: 10, autoAlpha: 0 });
+        gsap.set(".win", { y: 28, autoAlpha: 0 });
+        gsap.set(".win-top, .win-q, .win-sides, .win-sum, .win-ledger", { y: 10, autoAlpha: 0 });
         gsap.set(".land-tape", { autoAlpha: 0, y: 12 });
         gsap.set(".land-hero .land-kicker", { y: 16, autoAlpha: 0 });
         gsap.set(".land-title", { y: 48, autoAlpha: 0 });
@@ -109,9 +109,9 @@ export function Landing() {
           .to(".land-watermark", { y: 0, autoAlpha: 1, duration: 1.3, ease: "power3.out" }, "<")
           .to(".land-lede", { y: 0, autoAlpha: 1, duration: 0.5 }, "<0.12")
           .to(".land-cta", { autoAlpha: 1, duration: 0.4 }, "<0.1")
-          .to(".pair", { y: 0, autoAlpha: 1, duration: 0.7, ease: "power3.out" }, "-=0.35")
+          .to(".win", { y: 0, autoAlpha: 1, duration: 0.7, ease: "power3.out" }, "-=0.35")
           .to(
-            ".pair-svg, .pair-cap, .pair-ledger",
+            ".win-top, .win-q, .win-sides, .win-sum, .win-ledger",
             { y: 0, autoAlpha: 1, duration: 0.45, stagger: 0.05, ease: "power2.out" },
             "<0.15",
           )
@@ -237,7 +237,7 @@ export function Landing() {
           </div>
 
           <div className="land-hero-visual">
-            <HeroPair />
+            <HeroWindow />
           </div>
         </div>
       </section>
