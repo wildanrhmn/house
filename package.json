@@ -4,6 +4,7 @@
   "workspaces": ["web", "quote"],
   "scripts": {
     "dev": "npm run dev -w web",
-    "quote": "npm run start -w quote"
+    "quote": "tsx quote/src/index.ts",
+    "take": "tsx quote/src/take.ts"
   }
 }

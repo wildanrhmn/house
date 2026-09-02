@@ -1,36 +1,26 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { toHuman } from "@somnia-chain/markets-sdk";
+import { DEFAULT_HALF_SPREAD, DEFAULT_QUOTE_SIZE } from "../../web/src/lib/config.ts";
 import { discoverWindow, type HouseWindow } from "../../web/src/lib/discover.ts";
 import { createSignedExchange } from "../../web/src/lib/exchange.ts";
 import { cancelOwn, planQuotes, quoteBothSides } from "../../web/src/lib/house.ts";
+import { envNumber, keyFromEnv, short } from "./env.ts";
 
 const LOOP_MS = 20_000;
-
-function privateKeyFromEnvFile(): `0x${string}` {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../.env");
-  const text = readFileSync(root, "utf8");
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq < 0) continue;
-    if (line.slice(0, eq).trim() !== "PRIVATE_KEY") continue;
-    let value = line.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (!value.startsWith("0x")) value = `0x${value}`;
-    return value as `0x${string}`;
-  }
-  throw new Error("PRIVATE_KEY missing from .env");
-}
+const HALF_SPREAD = envNumber("HOUSE_HALF_SPREAD", DEFAULT_HALF_SPREAD);
+const SIZE = envNumber("HOUSE_SIZE", DEFAULT_QUOTE_SIZE);
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function topOfBook(exchange: ReturnType<typeof createSignedExchange>, live: HouseWindow) {
+  const book = await exchange.client.getBinaryOrderBook(live.pool, {
+    depth: 1,
+    decimals: live.quoteDecimals,
+  });
+  const px = (row?: { price: bigint | string }) =>
+    row ? Number(toHuman(row.price, live.quoteDecimals)).toFixed(3) : null;
+  return { bestBid: px(book.yesBids[0]), bestAsk: px(book.yesAsks[0]) };
 }
 
 async function tick(exchange: ReturnType<typeof createSignedExchange>, lastId: string | null) {
@@ -44,7 +34,7 @@ async function tick(exchange: ReturnType<typeof createSignedExchange>, lastId: s
     console.log("window rolled", live.marketId);
   }
 
-  const plan = await planQuotes(exchange, live);
+  const plan = await planQuotes(exchange, live, HALF_SPREAD, SIZE);
   if (!plan) {
     console.log("skip", live.marketId, "too close to lock or no fair");
     return live.marketId;
@@ -60,26 +50,26 @@ async function tick(exchange: ReturnType<typeof createSignedExchange>, lastId: s
     upId: result.upId ?? null,
     downId: result.downId ?? null,
     skipped: result.skipped,
+    book: await topOfBook(exchange, live),
   });
   return live.marketId;
 }
 
 async function main() {
-  const exchange = createSignedExchange({ privateKey: privateKeyFromEnvFile() });
+  const exchange = createSignedExchange({ privateKey: keyFromEnv("PRIVATE_KEY") });
   const wallet = exchange.walletAddress;
   if (!wallet) throw new Error("wallet did not load");
-  console.log("HOUSE quote", wallet.slice(0, 6) + "..." + wallet.slice(-4));
+  console.log("HOUSE quote", short(wallet), `half spread ${HALF_SPREAD}`, `size ${SIZE}`);
 
   let lastId: string | null = null;
   let stop = false;
-  let live: HouseWindow | null = null;
 
   const halt = async () => {
     if (stop) return;
     stop = true;
     console.log("stopping");
     try {
-      live = await discoverWindow(exchange);
+      const live = await discoverWindow(exchange);
       if (live) await cancelOwn(exchange, live);
     } catch (err) {
       console.warn("cancel on stop failed", err);

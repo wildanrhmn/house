@@ -11,6 +11,8 @@ import { DREAMDEX_VENUE, DEFAULT_HALF_SPREAD, DEFAULT_QUOTE_SIZE, minLeftSec } f
 import type { HouseWindow } from "./discover";
 import { expireNs, fairYes, snapLot, snapTick, twoSidedLevels } from "./quoting";
 
+type Onchain = Awaited<ReturnType<SomniaMarkets["client"]["getMarketOnchain"]>>;
+
 function reverted(err: unknown): boolean {
   const text = err instanceof Error ? err.message : String(err);
   return text.includes("PostOnlyWouldCross") || text.includes("post-only");
@@ -20,6 +22,14 @@ function receiptOk(info: unknown): boolean {
   const receipt = (info as PlaceOrderResult | undefined)?.receipt;
   if (!receipt) return true;
   return receipt.status === "success";
+}
+
+async function outcomeBalances(exchange: SomniaMarkets, oc: Onchain, account: Address) {
+  const [up, down] = await Promise.all([
+    exchange.client.getOutcomeBalance({ outcomeToken: oc.outcomeToken, account, id: oc.yesId }),
+    exchange.client.getOutcomeBalance({ outcomeToken: oc.outcomeToken, account, id: oc.noId }),
+  ]);
+  return { up, down };
 }
 
 export type QuotePlan = {
@@ -50,7 +60,16 @@ export async function planQuotes(
     ? Number(toHuman(book.yesAsks[0].price, window.quoteDecimals))
     : undefined;
   const fair = fairYes(bid, ask);
-  const { bidYes, askYes } = twoSidedLevels(fair, halfSpread);
+
+  // Sit one tick inside a wider market so HOUSE is top of book on both sides,
+  // but never thinner than two ticks. halfSpread is the ceiling, not the target.
+  let half = halfSpread;
+  if (bid !== undefined && ask !== undefined) {
+    const params = await exchange.client.getBinaryBookParams(window.pool);
+    const tick = Number(toHuman(params.tickSize, window.quoteDecimals));
+    half = Math.max(2 * tick, Math.min(halfSpread, (ask - bid) / 2 - tick));
+  }
+  const { bidYes, askYes } = twoSidedLevels(fair, half);
   if (bidYes >= askYes) return null;
   return { bidYes, askYes, size, fair };
 }
@@ -139,18 +158,39 @@ export async function quoteBothSides(
   return { upId, downId, skipped };
 }
 
+// A filled two-sided quote leaves equal YES and NO. Burning that pair returns
+// 1.00 of collateral per set, which is where the spread is realized.
+export async function mergeSets(exchange: SomniaMarkets, window: HouseWindow): Promise<bigint> {
+  const me = exchange.walletAddress;
+  if (!me) return 0n;
+  const oc = await exchange.client.getMarketOnchain(window.marketId);
+  const { up, down } = await outcomeBalances(exchange, oc, me);
+  const amount = up < down ? up : down;
+  if (amount === 0n) return 0n;
+  const res = await exchange.trader.burnSet({
+    pool: window.pool as Address,
+    amount,
+    outcomeToken: oc.outcomeToken,
+  });
+  if (res.receipt?.status === "reverted") throw new Error("Merge reverted");
+  return amount;
+}
+
+export type FlattenResult = { merged: bigint; soldUp: bigint; soldDown: bigint };
+
 export async function flattenInventory(
   exchange: SomniaMarkets,
   window: HouseWindow,
-): Promise<void> {
+): Promise<FlattenResult> {
+  const out: FlattenResult = { merged: 0n, soldUp: 0n, soldDown: 0n };
   await cancelOwn(exchange, window);
   const me = exchange.walletAddress;
-  if (!me) return;
+  if (!me) return out;
+
+  out.merged = await mergeSets(exchange, window);
+
   const oc = await exchange.client.getMarketOnchain(window.marketId);
-  const [up, down] = await Promise.all([
-    exchange.client.getOutcomeBalance(oc.outcomeToken, me, oc.yesId),
-    exchange.client.getOutcomeBalance(oc.outcomeToken, me, oc.noId),
-  ]);
+  const { up, down } = await outcomeBalances(exchange, oc, me);
   const params = await exchange.client.getBinaryBookParams(window.pool);
   const pool = window.pool as Address;
   const expiry = expireNs(Number(oc.expiry), 30);
@@ -166,6 +206,7 @@ export async function flattenInventory(
         orderType: ORDER_TYPE.MARKET,
         expireTimestampNs: expiry,
       });
+      out.soldUp = qty;
     }
   }
   if (down >= params.minQuantity) {
@@ -179,8 +220,10 @@ export async function flattenInventory(
         orderType: ORDER_TYPE.MARKET,
         expireTimestampNs: expiry,
       });
+      out.soldDown = qty;
     }
   }
+  return out;
 }
 
 export async function redeemSettled(exchange: SomniaMarkets): Promise<number> {
@@ -196,10 +239,8 @@ export async function redeemSettled(exchange: SomniaMarkets): Promise<number> {
     const marketId = row.marketId as `0x${string}`;
     const oc = await exchange.client.getMarketOnchain(marketId);
     if (!oc.isResolved && !oc.isVoided) continue;
-    const held = {
-      0: await exchange.client.getOutcomeBalance(oc.outcomeToken, me, oc.yesId),
-      1: await exchange.client.getOutcomeBalance(oc.outcomeToken, me, oc.noId),
-    } as const;
+    const { up, down } = await outcomeBalances(exchange, oc, me);
+    const held = { 0: up, 1: down } as const;
     const idxs: Array<0 | 1> = oc.isVoided ? [0, 1] : [oc.winningOutcome === 0 ? 0 : 1];
     for (const outcomeIdx of idxs) {
       if (held[outcomeIdx] === 0n) continue;
@@ -221,9 +262,5 @@ export async function readInventory(exchange: SomniaMarkets, window: HouseWindow
   const me = exchange.walletAddress;
   if (!me) return { up: 0n, down: 0n };
   const oc = await exchange.client.getMarketOnchain(window.marketId);
-  const [up, down] = await Promise.all([
-    exchange.client.getOutcomeBalance(oc.outcomeToken, me, oc.yesId),
-    exchange.client.getOutcomeBalance(oc.outcomeToken, me, oc.noId),
-  ]);
-  return { up, down };
+  return outcomeBalances(exchange, oc, me);
 }

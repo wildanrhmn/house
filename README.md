@@ -8,7 +8,7 @@ Shannon prototype for the Somnia x DreamDEX Event Contracts hackathon.
 
 ## Run
 
-Root `.env` needs `PRIVATE_KEY` (used only by the Node quoter). Do not commit it.
+Root `.env` needs `PRIVATE_KEY` for the Node quoter and `TAKER_KEY` for the demo taker. Both wallets need STT for gas: the SDK reserves a 0.6 STT envelope per write. Do not commit the file.
 
 ```bash
 npm install
@@ -17,11 +17,21 @@ npm run dev
 
 Landing: [http://localhost:3000](http://localhost:3000). Desk: [http://localhost:3000/desk](http://localhost:3000/desk). Connect a Shannon wallet, then Quote both sides once per window. Flatten sells leftover outcomes. Redeem settled pulls payouts after resolve.
 
-Node quoter (same key, requotes about every 20s):
+Node quoter (PRIVATE_KEY, requotes about every 20s). It sits one tick inside a wider market and never thinner than two ticks; `HOUSE_HALF_SPREAD` caps the half spread and `HOUSE_SIZE` sets contracts per side:
 
 ```bash
 npm run quote
 ```
+
+Demo taker (TAKER_KEY). Lifts the resting Up ask with a BUY_YES and hits the bid with a BUY_NO, both immediate or cancel, so each cross mints a complete set into the maker. `--dry` prints the plan without writing, `--faucet` mints test collateral first:
+
+```bash
+npm run take -- --dry
+npm run take -- --faucet
+npm run take
+```
+
+The loop: quote both sides, let the taker cross both, watch Sets held rise on the desk, then Flatten. Flatten cancels, merges every balanced YES and NO pair back to collateral, and sells any leftover. The merge is where the spread is realized.
 
 ## Stack
 

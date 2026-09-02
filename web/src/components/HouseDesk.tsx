@@ -34,8 +34,11 @@ export function HouseDesk() {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now() / 1000);
-  const [size, setSize] = useState(DEFAULT_QUOTE_SIZE);
-  const [spread, setSpread] = useState(DEFAULT_HALF_SPREAD);
+  const [sizeText, setSizeText] = useState(String(DEFAULT_QUOTE_SIZE));
+  const [spreadText, setSpreadText] = useState(String(DEFAULT_HALF_SPREAD));
+  const size = parseNum(sizeText, DEFAULT_QUOTE_SIZE);
+  const spread = parseNum(spreadText, DEFAULT_HALF_SPREAD);
+  const [kept, setKept] = useState(0);
 
   const { address, isConnected } = useAccount();
   const { connect, connectors, error: connectError } = useConnect();
@@ -100,7 +103,17 @@ export function HouseDesk() {
 
   useEffect(() => {
     void refreshInv();
+    const id = setInterval(() => void refreshInv(), 10_000);
+    return () => clearInterval(id);
   }, [refreshInv]);
+
+  const displayPlan = useMemo(() => {
+    if (plan) return plan;
+    const fair = fairYes(yesBid, yesAsk);
+    return { bidYes: fair - spread, askYes: fair + spread, size, fair };
+  }, [plan, yesBid, yesAsk, spread, size]);
+  const perSet = Math.max(0, displayPlan.askYes - displayPlan.bidYes);
+  const sets = Math.min(inv.up, inv.down);
 
   const run = async (label: "quote" | "flatten" | "redeem") => {
     if (!walletClient) {
@@ -133,8 +146,18 @@ export function HouseDesk() {
         text = bits.join(". ") || "Quoted.";
       } else if (label === "flatten") {
         if (!live) return;
-        await flattenInventory(signed, live);
-        text = "Flattened.";
+        const d = live.quoteDecimals;
+        const out = await flattenInventory(signed, live);
+        const merged = Number(toHuman(out.merged, d));
+        const sold = Number(toHuman(out.soldUp + out.soldDown, d));
+        if (merged > 0) setKept((k) => k + merged * perSet);
+        text =
+          [
+            merged > 0 ? `Merged ${merged} set${merged === 1 ? "" : "s"} back to collateral.` : null,
+            sold > 0 ? `Sold ${sold} leftover.` : null,
+          ]
+            .filter(Boolean)
+            .join(" ") || "Nothing to flatten.";
       } else {
         const n = await redeemSettled(signed);
         text = n === 0 ? "Nothing to redeem." : `Redeemed ${n} payout${n === 1 ? "" : "s"}.`;
@@ -153,11 +176,6 @@ export function HouseDesk() {
   const vsOpen =
     btc != null && openPx != null && openPx !== 0 ? ((btc - openPx) / openPx) * 100 : null;
 
-  const displayPlan = useMemo(() => {
-    if (plan) return plan;
-    const fair = fairYes(yesBid, yesAsk);
-    return { bidYes: fair - spread, askYes: fair + spread, size, fair };
-  }, [plan, yesBid, yesAsk, spread, size]);
 
   return (
     <main className="pit">
@@ -190,6 +208,11 @@ export function HouseDesk() {
         <p className="banner">Waiting for a live DreamDEX BTC 15m window.</p>
       ) : remaining <= 0 ? (
         <p className="banner">This window locked. The next one will arm automatically.</p>
+      ) : remaining <= minLeftSec(live.intervalSec) ? (
+        <p className="banner">
+          Window locks in {Math.ceil(remaining)}s. Quotes close this near the lock. The next window
+          arms automatically.
+        </p>
       ) : null}
 
       {connectError ? <p className="banner warn">{connectError.message}</p> : null}
@@ -201,6 +224,8 @@ export function HouseDesk() {
           <Stat k="BTC now" v={btc == null ? "-" : btc.toLocaleString(undefined, { maximumFractionDigits: 2 })} />
           <Stat k="Open" v={openPx == null ? "-" : openPx.toLocaleString(undefined, { maximumFractionDigits: 2 })} />
           <Stat k="Vs open" v={vsOpen == null ? "-" : `${vsOpen >= 0 ? "+" : ""}${vsOpen.toFixed(3)}%`} />
+          <Stat k="Sets held" v={sets.toFixed(2)} />
+          <Stat k="Spread kept" v={`+${(kept + sets * perSet).toFixed(3)}`} />
         </div>
       </section>
 
@@ -220,22 +245,19 @@ export function HouseDesk() {
         <label>
           Size
           <input
-            type="number"
-            min={0.001}
-            step={1}
-            value={size}
-            onChange={(e) => setSize(Number(e.target.value))}
+            type="text"
+            inputMode="decimal"
+            value={sizeText}
+            onChange={(e) => setSizeText(e.target.value)}
           />
         </label>
         <label>
           Half spread
           <input
-            type="number"
-            min={0.001}
-            max={0.2}
-            step={0.001}
-            value={spread}
-            onChange={(e) => setSpread(Number(e.target.value))}
+            type="text"
+            inputMode="decimal"
+            value={spreadText}
+            onChange={(e) => setSpreadText(e.target.value)}
           />
         </label>
         <button
@@ -302,6 +324,12 @@ function BookCol({
       </ol>
     </div>
   );
+}
+
+// Accepts a comma decimal too; falls back when the field is mid-edit or empty.
+function parseNum(raw: string, fallback: number) {
+  const n = Number(raw.trim().replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 function short(addr: string) {
