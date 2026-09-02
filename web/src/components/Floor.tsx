@@ -187,13 +187,6 @@ export function Floor() {
                 ))}
               </dl>
               <div className="receipt-bar" aria-hidden="true" />
-              <footer>
-                <a href="https://github.com/wildanrhmn/house" target="_blank" rel="noreferrer">
-                  github.com/wildanrhmn/house
-                </a>
-                <span>Somnia x DreamDEX Event Contracts</span>
-                <span>Submit by 8 Sep 2026</span>
-              </footer>
               <div className="receipt-stamp" aria-hidden="true">
                 Proven on Shannon
               </div>

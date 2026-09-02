@@ -124,7 +124,6 @@ export function HowItWorks() {
           const spreadTag = q<SVGGElement>(".cine-spread-tag")[0];
           const kicker = q<HTMLElement>(".cine-copy .land-kicker")[0];
           const tc = q<HTMLElement>(".cine-tc strong")[0];
-          const status = q<HTMLElement>(".cine-status")[0];
           const count = q<HTMLElement>(".cine-count strong")[0];
           const segs = q<HTMLElement>(".cine-seg i");
           const shots = q<HTMLElement>(".cine-shot");
@@ -174,9 +173,6 @@ export function HowItWorks() {
             spread.setAttribute("width", `${Math.max(0, bx - px(T_ASK))}`);
             spreadTag.setAttribute("transform", `translate(${bx} 0)`);
             tc.textContent = timecode(t);
-            const done = t >= 0.985;
-            status.textContent = done ? "Resolved" : "Trading";
-            status.classList.toggle("is-done", done);
           };
           render();
 
@@ -393,7 +389,6 @@ export function HowItWorks() {
           </div>
         </div>
         <div className="cine-tc">
-          <span className="cine-status">Trading</span>
           <strong>00:00.00</strong>
         </div>
       </div>

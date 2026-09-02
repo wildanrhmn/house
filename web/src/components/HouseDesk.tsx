@@ -390,10 +390,6 @@ export function HouseDesk() {
         <Link className="pit-mark" href="/">
           <HouseLogo size={18} />
         </Link>
-        <p className="pit-status">
-          <i className={`pit-lamp ${phase === "trading" ? "is-live" : phase === "locking" ? "is-lock" : ""}`} />
-          {live ? `${live.asset} ${fmtInterval(live.intervalSec)}, ${phase}` : "finding a window"}
-        </p>
         <div className="pit-wallet">
           {address ? (
             <>
