@@ -13,3 +13,4 @@ spike/
 # local notes, never published
 me.md
 MEMORY.md
+*.tsbuildinfo
