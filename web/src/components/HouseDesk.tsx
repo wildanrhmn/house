@@ -97,11 +97,11 @@ export function HouseDesk() {
       const mm = gsap.matchMedia();
       mm.add("(prefers-reduced-motion: no-preference)", () => {
         gsap.from(".pit-top", { autoAlpha: 0, y: -8, duration: 0.6, ease: "power2.out" });
-        gsap.from(".pit-window > *, .bet > *, .pit-house > *", {
+        gsap.from(".pit-stage > *", {
           autoAlpha: 0,
           y: 18,
           duration: 0.8,
-          stagger: 0.06,
+          stagger: 0.08,
           ease: "power3.out",
           delay: 0.15,
         });
@@ -347,20 +347,21 @@ export function HouseDesk() {
   const ringT = live && live.intervalSec > 0 ? Math.max(0, Math.min(1, remaining / live.intervalSec)) : 0;
   const C = 2 * Math.PI * 64;
   const canQuote = !!live && phase === "trading" && !busy;
+  const crowdPct = Math.round(next.fair * 100);
 
   const hint = !live
-    ? { text: "The desk is finding the next window.", warn: false }
+    ? { text: "Finding the next window.", warn: false }
     : phase === "locked"
-      ? { text: "This window locked. The next one opens on its own.", warn: true }
+      ? { text: "Locked. The next window opens on its own.", warn: true }
       : phase === "locking"
-        ? { text: `The window locks in ${Math.ceil(remaining)} seconds, so posting is closed.`, warn: true }
+        ? { text: `Locks in ${Math.ceil(remaining)}s. Posting is closed.`, warn: true }
         : !isConnected && watch
-          ? { text: `Following ${short(watch)}. Connect a wallet to act.`, warn: false }
+          ? { text: `Following ${short(watch)}.`, warn: false }
           : !isConnected
-            ? { text: "Connect a Shannon wallet to post your two prices.", warn: false }
+            ? { text: "Connect a wallet to post your prices.", warn: false }
             : bothResting
-              ? { text: "Your two prices are up. Whoever takes them pays you the gap.", warn: false }
-              : { text: "Post two prices, one tick better than the crowd on each side.", warn: false };
+              ? { text: "Both prices are up. Takers pay you the gap.", warn: false }
+              : { text: "Crowd near " + crowdPct + "% yes. You price both sides.", warn: false };
 
   const sideState = (mine: Resting | undefined, held: number) => {
     if (mine) return { cls: "waiting", text: "Waiting for a taker" };
@@ -370,7 +371,6 @@ export function HouseDesk() {
   };
   const upState = sideState(mineBid, inv.up);
   const downState = sideState(mineAsk, inv.down);
-  const crowdPct = Math.round(next.fair * 100);
 
   return (
     <main ref={root} className="pit">
@@ -421,7 +421,7 @@ export function HouseDesk() {
       </header>
 
       <section className="pit-stage">
-        <aside className="pit-window">
+        <div className="row-window">
           <div className={`pit-ring ${phase === "locking" ? "is-lock" : phase === "trading" ? "" : "is-off"}`}>
             <svg viewBox="0 0 140 140" aria-hidden="true">
               <circle className="track" cx="70" cy="70" r="64" />
@@ -440,210 +440,173 @@ export function HouseDesk() {
             </div>
           </div>
 
-          <div className="pit-px">
-            <span className="pit-k">{live ? `${live.asset} against the open` : "Index"}</span>
-            <strong>{btc == null ? "–" : btc.toLocaleString("en-US", { maximumFractionDigits: 2 })}</strong>
-            <span className={`pit-delta ${upside ? "up" : "down"}`}>
-              {vsOpen == null
-                ? "waiting for the open"
-                : `${vsOpen >= 0 ? "+" : ""}${vsOpen.toFixed(3)}% from ${openPx?.toLocaleString("en-US", { maximumFractionDigits: 2 })}`}
-            </span>
+          <div className="pit-index">
+            <div className="pit-px">
+              <span className="pit-k">{live ? `${live.asset} now` : "Index"}</span>
+              <strong>{btc == null ? "–" : btc.toLocaleString("en-US", { maximumFractionDigits: 2 })}</strong>
+              <span className={`pit-delta ${upside ? "up" : "down"}`}>
+                {vsOpen == null
+                  ? "waiting for the open"
+                  : `${vsOpen >= 0 ? "+" : ""}${vsOpen.toFixed(3)}% from the open`}
+              </span>
+            </div>
+            <svg
+              className={`pit-spark ${upside ? "" : "down"}`}
+              viewBox="0 0 300 90"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <defs>
+                <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stopColor="currentColor" stopOpacity="0.28" />
+                  <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              {spark ? (
+                <>
+                  <path className="fill" d={`${spark.path} L300,90 L0,90 Z`} />
+                  {spark.openY != null ? (
+                    <line className="open" x1="0" x2="300" y1={spark.openY} y2={spark.openY} />
+                  ) : null}
+                  <path className="line" d={spark.path} />
+                  <circle className="dot" cx="300" cy={spark.lastY} r="2.6" />
+                </>
+              ) : null}
+            </svg>
           </div>
+        </div>
 
-          <svg
-            className={`pit-spark ${upside ? "" : "down"}`}
-            viewBox="0 0 300 90"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <defs>
-              <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="currentColor" stopOpacity="0.28" />
-                <stop offset="1" stopColor="currentColor" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            {spark ? (
-              <>
-                <path className="fill" d={`${spark.path} L300,90 L0,90 Z`} />
-                {spark.openY != null ? (
-                  <line className="open" x1="0" x2="300" y1={spark.openY} y2={spark.openY} />
-                ) : null}
-                <path className="line" d={spark.path} />
-                <circle className="dot" cx="300" cy={spark.lastY} r="2.6" />
-              </>
-            ) : null}
-          </svg>
-
+        <div className="row-q">
+          <h2>
+            {live && openPx != null
+              ? `Will BTC be above ${openPx.toLocaleString("en-US", { maximumFractionDigits: 0 })} at ${stampShort(live.expiry)}?`
+              : "Waiting for the next window"}
+          </h2>
           <p className={`pit-hint ${hint.warn ? "warn" : ""}`}>{hint.text}</p>
           {connectError ? <p className="pit-hint warn">{connectError.message}</p> : null}
-        </aside>
+        </div>
 
-        <section className="bet">
-          <header className="bet-q">
-            <span className="pit-k">The bet</span>
-            <h2>
-              {live && openPx != null
-                ? `Will BTC be above ${openPx.toLocaleString("en-US", { maximumFractionDigits: 0 })} at ${stampShort(live.expiry)}?`
-                : "Waiting for the next window"}
-            </h2>
-            <p>
-              {live && yesBid !== undefined && yesAsk !== undefined
-                ? `The crowd puts it near ${crowdPct}% yes. You do not pick a side. You price both.`
-                : "You do not pick a side. You price both."}
-            </p>
-          </header>
-
-          <div className="bet-sides">
-            <article className="side up">
-              <header>
-                <span className="side-name">Up</span>
-                <span className={`pill ${upState.cls}`}>{upState.text}</span>
-              </header>
-              <div className="side-you">
-                <span className="pit-k">You pay</span>
-                <strong>{upPay.toFixed(3)}</strong>
-                <em>for each UP contract</em>
-              </div>
-              <p className="side-crowd">
-                {crowdUp !== undefined ? `The crowd pays ${crowdUp.toFixed(3)}. You offer one tick more.` : "No one is bidding yet."}
-              </p>
-              {inv.up > 0 ? (
-                <p className="side-held">
-                  You hold <b>{fmt(inv.up)}</b> UP
-                </p>
-              ) : null}
-            </article>
-
-            <article className="side down">
-              <header>
-                <span className="side-name">Down</span>
-                <span className={`pill ${downState.cls}`}>{downState.text}</span>
-              </header>
-              <div className="side-you">
-                <span className="pit-k">You pay</span>
-                <strong>{downPay.toFixed(3)}</strong>
-                <em>for each DOWN contract</em>
-              </div>
-              <p className="side-crowd">
-                {crowdDown !== undefined ? `The crowd pays ${crowdDown.toFixed(3)}. You offer one tick more.` : "No one is bidding yet."}
-              </p>
-              {inv.down > 0 ? (
-                <p className="side-held">
-                  You hold <b>{fmt(inv.down)}</b> DOWN
-                </p>
-              ) : null}
-            </article>
-          </div>
-
-          <div className="bet-sum">
-            <span>
-              <b>{upPay.toFixed(3)}</b>
-              <i>UP</i>
-            </span>
-            <span className="op">+</span>
-            <span>
-              <b>{downPay.toFixed(3)}</b>
-              <i>DOWN</i>
-            </span>
-            <span className="op">=</span>
-            <span>
-              <b>{pairCost.toFixed(3)}</b>
-              <i>you pay a pair</i>
-            </span>
-            <span className="op">and</span>
-            <span>
-              <b>1.000</b>
-              <i>a pair pays out</i>
-            </span>
-            <span className="keep">
-              <b>+{perPair.toFixed(3)}</b>
-              <i>you keep, whatever BTC does</i>
-            </span>
-          </div>
-
+        <div className="row-sides">
+          <article className="side up">
+            <header>
+              <span className="side-name">Up</span>
+              <span className={`pill ${upState.cls}`}>{upState.text}</span>
+            </header>
+            <strong>{upPay.toFixed(3)}</strong>
+            <span className="side-you">you pay</span>
+            <span className="side-crowd">{crowdUp !== undefined ? `crowd ${crowdUp.toFixed(3)}` : "no bids yet"}</span>
+            {inv.up > 0 ? <span className="side-held">holding {fmt(inv.up)}</span> : null}
+          </article>
+          <article className="side down">
+            <header>
+              <span className="side-name">Down</span>
+              <span className={`pill ${downState.cls}`}>{downState.text}</span>
+            </header>
+            <strong>{downPay.toFixed(3)}</strong>
+            <span className="side-you">you pay</span>
+            <span className="side-crowd">{crowdDown !== undefined ? `crowd ${crowdDown.toFixed(3)}` : "no bids yet"}</span>
+            {inv.down > 0 ? <span className="side-held">holding {fmt(inv.down)}</span> : null}
+          </article>
           {chip ? (
             <div className="pit-chip" key={chip}>
               {chip}
             </div>
           ) : null}
-        </section>
+        </div>
 
-        <aside className="pit-house">
-          <div className="ledger">
-            <span className="pit-k">This window</span>
-            <div className="ledger-row">
-              <span>Pairs held</span>
-              <strong>
-                <Num v={sets} dp={sets % 1 === 0 ? 0 : 2} />
-              </strong>
-              <em>{sets > 0 ? `worth ${sets.toFixed(2)} tUSDC` : "none yet"}</em>
-            </div>
-            <div className="ledger-row">
-              <span>Unmatched</span>
-              <strong>{unmatched > 0.0005 ? `${fmt(unmatched)} ${unmatchedSide}` : "0"}</strong>
-              <em>{unmatched > 0.0005 ? "sold when you cash out" : "both sides even"}</em>
-            </div>
-            <div className="ledger-row kept">
-              <span>Spread kept</span>
-              <strong>
-                +<Num v={kept + sets * perPair} dp={3} />
-              </strong>
-              <em>tUSDC</em>
-            </div>
+        <div className="row-sum">
+          <div>
+            <b>{pairCost.toFixed(3)}</b>
+            <i>a pair costs you</i>
           </div>
+          <div>
+            <b>1.000</b>
+            <i>a pair pays</i>
+          </div>
+          <div className="keep">
+            <b>+{perPair.toFixed(3)}</b>
+            <i>you keep</i>
+          </div>
+        </div>
 
-          <div className="pit-act">
-            <button type="button" className="solid" disabled={!canQuote} onClick={() => void run("quote")}>
-              {busy === "quote" ? "Posting…" : bothResting ? "Repost both prices" : "Quote both sides"}
+        <div className="row-act">
+          <button type="button" className="solid" disabled={!canQuote} onClick={() => void run("quote")}>
+            {busy === "quote" ? "Posting…" : bothResting ? "Repost both sides" : "Quote both sides"}
+          </button>
+          <div className="pit-tune">
+            <label>
+              <input type="text" inputMode="decimal" value={sizeText} onChange={(e) => setSizeText(e.target.value)} />
+              <span>a side</span>
+            </label>
+            <label>
+              <input type="text" inputMode="decimal" value={cutText} onChange={(e) => setCutText(e.target.value)} />
+              <span>cut, max</span>
+            </label>
+          </div>
+          <div className="acts">
+            <button
+              type="button"
+              className="ghost"
+              disabled={!!busy || !live}
+              title="Hands pairs back for 1.00 each and sells anything unmatched"
+              onClick={() => void run("flatten")}
+            >
+              {busy === "flatten" ? "Cashing out…" : "Cash out"}
             </button>
-            <p className="pit-caption">
-              Posts {fmt(size)} contracts on each side at {upPay.toFixed(3)} and {downPay.toFixed(3)}. Nothing is spent until
-              someone takes a price.
-            </p>
-            <div className="pit-tune">
-              <label>
-                Contracts a side
-                <input type="text" inputMode="decimal" value={sizeText} onChange={(e) => setSizeText(e.target.value)} />
-              </label>
-              <label>
-                Max cut per pair
-                <input type="text" inputMode="decimal" value={cutText} onChange={(e) => setCutText(e.target.value)} />
-              </label>
-            </div>
-            <div className="acts">
-              <div>
-                <button type="button" className="ghost" disabled={!!busy || !live} onClick={() => void run("flatten")}>
-                  {busy === "flatten" ? "Cashing out…" : "Cash out"}
-                </button>
-                <small>Pairs back for 1.00 each. Unmatched sold at the market.</small>
-              </div>
-              <div>
-                <button type="button" className="ghost" disabled={!!busy} onClick={() => void run("redeem")}>
-                  {busy === "redeem" ? "Collecting…" : "Collect payouts"}
-                </button>
-                <small>From windows that already settled.</small>
-              </div>
-              <button type="button" className="text" disabled={!!busy || !live} onClick={() => void run("pull")}>
-                {busy === "pull" ? "Taking down…" : "Take my prices down"}
-              </button>
-            </div>
+            <button
+              type="button"
+              className="ghost"
+              disabled={!!busy}
+              title="Collects winnings from windows that already settled"
+              onClick={() => void run("redeem")}
+            >
+              {busy === "redeem" ? "Collecting…" : "Collect payouts"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              disabled={!!busy || !live}
+              title="Cancels your resting prices"
+              onClick={() => void run("pull")}
+            >
+              {busy === "pull" ? "Taking down…" : "Take down"}
+            </button>
           </div>
+        </div>
 
-          <ol className="pit-log">
-            {events.length === 0 ? (
-              <li>
-                <span>What happens to your prices will show up here.</span>
+        <div className="row-ledger">
+          <div>
+            <b>
+              <Num v={sets} dp={sets % 1 === 0 ? 0 : 2} />
+            </b>
+            <i>pairs held</i>
+          </div>
+          <div>
+            <b>{unmatched > 0.0005 ? `${fmt(unmatched)} ${unmatchedSide}` : "0"}</b>
+            <i>unmatched</i>
+          </div>
+          <div className="keep">
+            <b>
+              +<Num v={kept + sets * perPair} dp={3} />
+            </b>
+            <i>spread kept</i>
+          </div>
+        </div>
+
+        <ol className="pit-log">
+          {events.length === 0 ? (
+            <li>
+              <span>Your prices, fills and pairs will show up here.</span>
+            </li>
+          ) : (
+            events.slice(0, 4).map((e) => (
+              <li key={e.id} className={e.tone ?? ""}>
+                <time>{stampShort(e.t / 1000)}</time>
+                <span>{e.text}</span>
               </li>
-            ) : (
-              events.map((e) => (
-                <li key={e.id} className={e.tone ?? ""}>
-                  <time>{stampShort(e.t / 1000)}</time>
-                  <span>{e.text}</span>
-                </li>
-              ))
-            )}
-          </ol>
-        </aside>
+            ))
+          )}
+        </ol>
       </section>
     </main>
   );
