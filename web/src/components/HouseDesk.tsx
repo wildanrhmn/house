@@ -32,9 +32,6 @@ gsap.registerPlugin(useGSAP);
 
 type Tone = "up" | "down" | "warn";
 type Ev = { id: number; t: number; text: string; tone?: Tone };
-type Level = { key: string; price: number; qty: number; mine?: Resting; ghost?: boolean; empty?: boolean };
-
-const SLOTS = 4;
 
 const pc = createPublicClient({ chain: CHAIN, transport: http(HTTP_RPC_URL) });
 const EMPTY_BOOK: BinaryOrderBook = { yesBids: [], yesAsks: [], noBids: [], noAsks: [] };
@@ -54,9 +51,9 @@ export function HouseDesk() {
   const [chip, setChip] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now() / 1000);
   const [sizeText, setSizeText] = useState(String(DEFAULT_QUOTE_SIZE));
-  const [spreadText, setSpreadText] = useState(String(DEFAULT_HALF_SPREAD));
+  const [cutText, setCutText] = useState(String(DEFAULT_HALF_SPREAD * 2));
   const size = parseNum(sizeText, DEFAULT_QUOTE_SIZE);
-  const spread = parseNum(spreadText, DEFAULT_HALF_SPREAD);
+  const spread = parseNum(cutText, DEFAULT_HALF_SPREAD * 2) / 2;
   const evId = useRef(0);
   const lastSets = useRef(-1);
   const lastMarket = useRef<string | null>(null);
@@ -81,46 +78,6 @@ export function HouseDesk() {
   const livePx = useLivePrice(live?.asset);
 
   const d = live?.quoteDecimals ?? 6;
-
-  // The book comes from the chain every two seconds. The indexer and the
-  // websocket tail can run minutes behind; the pool never does.
-  useEffect(() => {
-    if (!live) {
-      setBook(EMPTY_BOOK);
-      return;
-    }
-    let stop = false;
-    const pool = live.pool as Address;
-    const dec = live.quoteDecimals;
-    const read = async () => {
-      try {
-        const b = await getReadExchange().client.getBinaryOrderBook(pool, { depth: 6, decimals: dec });
-        if (!stop) setBook(b);
-      } catch {
-        // keep the last good book
-      }
-    };
-    void read();
-    const id = setInterval(() => void read(), 2_000);
-    return () => {
-      stop = true;
-      clearInterval(id);
-    };
-  }, [live]);
-
-  // The price line is sampled from the live index as it arrives, so it never
-  // depends on indexed history. It keeps the current window only.
-  useEffect(() => {
-    const p = livePx?.price;
-    if (!p || !live) return;
-    const t = Date.now() / 1000;
-    const from = live.expiry - live.intervalSec;
-    setSeries((s) => {
-      const last = s[s.length - 1];
-      if (last && Math.abs(last.p - p) < 1e-9 && t - last.t < 2) return s;
-      return [...s.filter((x) => x.t >= from), { t, p }].slice(-240);
-    });
-  }, [livePx, live, now]);
   const toN = useCallback((v: bigint | string) => Number(toHuman(v, d)), [d]);
   const remaining = live ? live.expiry - now : 0;
   const headroom = live ? minLeftSec(live.intervalSec) : 0;
@@ -140,7 +97,7 @@ export function HouseDesk() {
       const mm = gsap.matchMedia();
       mm.add("(prefers-reduced-motion: no-preference)", () => {
         gsap.from(".pit-top", { autoAlpha: 0, y: -8, duration: 0.6, ease: "power2.out" });
-        gsap.from(".pit-window > *, .pit-book, .pit-house > *", {
+        gsap.from(".pit-window > *, .bet > *, .pit-house > *", {
           autoAlpha: 0,
           y: 18,
           duration: 0.8,
@@ -180,14 +137,55 @@ export function HouseDesk() {
     return () => clearInterval(id);
   }, [refreshWindow]);
 
+  // The book comes from the chain every two seconds. The indexer and the
+  // websocket tail can run minutes behind; the pool never does.
+  useEffect(() => {
+    if (!live) {
+      setBook(EMPTY_BOOK);
+      return;
+    }
+    let stop = false;
+    const pool = live.pool as Address;
+    const dec = live.quoteDecimals;
+    const read = async () => {
+      try {
+        const b = await getReadExchange().client.getBinaryOrderBook(pool, { depth: 3, decimals: dec });
+        if (!stop) setBook(b);
+      } catch {
+        // keep the last good book
+      }
+    };
+    void read();
+    const id = setInterval(() => void read(), 2_000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [live]);
+
+  // The price line is sampled from the live index as it arrives, so it never
+  // depends on indexed history. It keeps the current window only.
+  useEffect(() => {
+    const p = livePx?.price;
+    if (!p || !live) return;
+    const t = Date.now() / 1000;
+    const from = live.expiry - live.intervalSec;
+    setSeries((s) => {
+      const last = s[s.length - 1];
+      if (last && Math.abs(last.p - p) < 1e-9 && t - last.t < 2) return s;
+      return [...s.filter((x) => x.t >= from), { t, p }].slice(-240);
+    });
+  }, [livePx, live, now]);
+
   // Everything about this wallet, read at chain head: outcome balances,
-  // resting quotes, collateral. Also where a freshly minted set is noticed.
+  // resting quotes, collateral. Also where fills and minted sets are noticed.
   const refreshMine = useCallback(async () => {
     if (!live || !address) {
       setInv({ up: 0, down: 0 });
       setResting([]);
       setCollateral(null);
       lastSets.current = -1;
+      prevInv.current = null;
       return;
     }
     try {
@@ -202,16 +200,15 @@ export function HouseDesk() {
       ]);
       const u = toN(up);
       const dn = toN(down);
-      // A rise in what you hold is a fill against one of your resting quotes.
       const prev = prevInv.current;
       if (prev) {
         const wasBid = prevResting.current.find((o) => o.isBid);
         const wasAsk = prevResting.current.find((o) => !o.isBid);
         if (u > prev.up + 1e-9) {
-          log(`Your bid filled: ${fmt(u - prev.up)} YES${wasBid ? ` at ${toN(wasBid.price).toFixed(3)}` : ""}.`, "up");
+          log(`Someone took your UP price${wasBid ? ` at ${toN(wasBid.price).toFixed(3)}` : ""}. You hold ${fmt(u - prev.up)} more UP.`, "up");
         }
         if (dn > prev.down + 1e-9) {
-          log(`Your ask filled: ${fmt(dn - prev.down)} NO${wasAsk ? ` at ${toN(wasAsk.price).toFixed(3)}` : ""}.`, "down");
+          log(`Someone took your DOWN price${wasAsk ? ` at ${(1 - toN(wasAsk.price)).toFixed(3)}` : ""}. You hold ${fmt(dn - prev.down)} more DOWN.`, "down");
         }
       }
       prevInv.current = { up: u, down: dn };
@@ -222,8 +219,8 @@ export function HouseDesk() {
       const sets = Math.min(u, dn);
       if (lastSets.current >= 0 && sets > lastSets.current) {
         const n = sets - lastSets.current;
-        setChip(`A set was minted to you`);
-        log(`${fmt(n)} complete set${n === 1 ? "" : "s"} minted to you.`, "up");
+        setChip("Both sides taken. A pair is yours.");
+        log(`${fmt(n)} pair${n === 1 ? "" : "s"} complete. Cash out to bank 1.00 each.`, "up");
       }
       lastSets.current = sets;
     } catch (err) {
@@ -239,7 +236,7 @@ export function HouseDesk() {
 
   useEffect(() => {
     if (!chip) return;
-    const id = setTimeout(() => setChip(null), 2_800);
+    const id = setTimeout(() => setChip(null), 3_000);
     return () => clearTimeout(id);
   }, [chip]);
 
@@ -250,7 +247,7 @@ export function HouseDesk() {
   const bothResting = !!mineBid && !!mineAsk;
 
   // Where the next quote would sit, from the live book: one tick inside a
-  // wider market, never thinner than two ticks, never wider than half spread.
+  // wider market, never thinner than two ticks, never wider than the cut.
   const next = useMemo(() => {
     const tick = 0.001;
     const fair = fairYes(yesBid, yesAsk);
@@ -262,35 +259,17 @@ export function HouseDesk() {
     return { bid: r3(clampProb(fair - half)), ask: r3(clampProb(fair + half)), fair };
   }, [yesBid, yesAsk, spread]);
 
-  const perSet = useMemo(() => {
-    if (mineBid && mineAsk) return Math.max(0, toN(mineAsk.price) - toN(mineBid.price));
-    return Math.max(0, next.ask - next.bid);
-  }, [mineBid, mineAsk, next, toN]);
+  // Everything the user sees is in "what you pay" terms. UP is the YES price.
+  // DOWN is one minus the YES price of the BUY_NO order.
+  const upPay = mineBid ? toN(mineBid.price) : next.bid;
+  const downPay = mineAsk ? 1 - toN(mineAsk.price) : 1 - next.ask;
+  const pairCost = upPay + downPay;
+  const perPair = Math.max(0, 1 - pairCost);
   const sets = Math.min(inv.up, inv.down);
   const unmatched = Math.abs(inv.up - inv.down);
-  const unmatchedSide = inv.up > inv.down ? "YES" : "NO";
-
-  // A fixed number of slots a side, keyed by rank from mid, so the ladder
-  // never jumps: a level that leaves empties the far slot and the rest shift
-  // their contents in place. Your row and the next row keep their own keys.
-  const ladder = useMemo(() => {
-    const showNext = !!live && phase === "trading";
-    const side = (levels: typeof book.yesAsks, prefix: string, mine: Resting | undefined, nextPx: number, farFirst: boolean) => {
-      const filled: Level[] = levels
-        .slice(0, SLOTS)
-        .map((l, i) => ({ key: `${prefix}${i}`, price: toN(l.price), qty: toN(l.quantity) }));
-      if (mine) filled.push({ key: `you-${prefix}`, price: toN(mine.price), qty: toN(mine.quantity), mine });
-      else if (showNext) filled.push({ key: `next-${prefix}`, price: nextPx, qty: size, ghost: true });
-      filled.sort((a, b) => b.price - a.price);
-      const empties: Level[] = [];
-      for (let i = levels.length; i < SLOTS; i++) empties.push({ key: `${prefix}${i}`, price: Number.NaN, qty: 0, empty: true });
-      return farFirst ? [...empties, ...filled] : [...filled, ...empties];
-    };
-    const asks = side(book.yesAsks, "a", mineAsk, next.ask, true);
-    const bids = side(book.yesBids, "b", mineBid, next.bid, false);
-    const max = Math.max(1, ...asks.map((l) => l.qty), ...bids.map((l) => l.qty));
-    return { asks, bids, max };
-  }, [book, mineAsk, mineBid, next, live, phase, size, toN]);
+  const unmatchedSide = inv.up > inv.down ? "UP" : "DOWN";
+  const crowdUp = yesBid;
+  const crowdDown = yesAsk !== undefined ? 1 - yesAsk : undefined;
 
   const spark = useMemo(() => {
     const pts = series.map((x) => x.p);
@@ -327,28 +306,31 @@ export function HouseDesk() {
           return;
         }
         if (result.upId && result.downId) {
-          log(`Resting at ${result.plan.bidYes.toFixed(3)} and ${result.plan.askYes.toFixed(3)}.`, "up");
+          log(
+            `Your prices are up: ${result.plan.bidYes.toFixed(3)} for UP, ${(1 - result.plan.askYes).toFixed(3)} for DOWN. Waiting for takers.`,
+            "up",
+          );
         } else {
-          log(`Only one side rested. ${result.skipped.join(". ")}.`, "warn");
+          log(`Only one side posted. ${result.skipped.join(". ")}.`, "warn");
         }
       } else if (label === "flatten" && live) {
         const out = await flattenInventory(signed, live);
         const merged = toN(out.merged);
         const sold = toN(out.soldUp + out.soldDown);
-        if (merged > 0) setKept((k) => k + merged * perSet);
-        prevInv.current = null;
+        if (merged > 0) setKept((k) => k + merged * perPair);
         const parts = [
-          merged > 0 ? `Merged ${fmt(merged)} set${merged === 1 ? "" : "s"} back to collateral` : null,
-          sold > 0 ? `sold ${fmt(sold)} leftover` : null,
+          merged > 0 ? `Banked ${fmt(merged)} pair${merged === 1 ? "" : "s"} for ${merged.toFixed(2)} tUSDC` : null,
+          sold > 0 ? `sold ${fmt(sold)} unmatched at the market` : null,
         ].filter(Boolean);
-        log(parts.length ? `${parts.join(", ")}.` : "Nothing to flatten.", merged > 0 ? "up" : undefined);
+        log(parts.length ? `${parts.join(", ")}.` : "Nothing to cash out.", merged > 0 ? "up" : undefined);
         lastSets.current = 0;
+        prevInv.current = null;
       } else if (label === "pull" && live) {
         const n = await cancelOwn(signed, live);
-        log(n ? `Pulled ${n} quote${n === 1 ? "" : "s"}.` : "No quotes to pull.");
+        log(n ? `Took down ${n} price${n === 1 ? "" : "s"}.` : "No prices to take down.");
       } else if (label === "redeem") {
         const n = await redeemSettled(signed);
-        log(n === 0 ? "Nothing to redeem yet." : `Redeemed ${n} payout${n === 1 ? "" : "s"}.`, n ? "up" : undefined);
+        log(n === 0 ? "Nothing to collect yet." : `Collected ${n} payout${n === 1 ? "" : "s"}.`, n ? "up" : undefined);
       }
       await refreshMine();
       await refreshWindow();
@@ -371,18 +353,24 @@ export function HouseDesk() {
     : phase === "locked"
       ? { text: "This window locked. The next one opens on its own.", warn: true }
       : phase === "locking"
-        ? { text: `The window locks in ${Math.ceil(remaining)} seconds, so quoting is closed.`, warn: true }
+        ? { text: `The window locks in ${Math.ceil(remaining)} seconds, so posting is closed.`, warn: true }
         : !isConnected && watch
           ? { text: `Following ${short(watch)}. Connect a wallet to act.`, warn: false }
           : !isConnected
-            ? { text: "Connect a Shannon wallet to sit on both sides of this book.", warn: false }
+            ? { text: "Connect a Shannon wallet to post your two prices.", warn: false }
             : bothResting
-              ? { text: "Both sides are resting. Anyone who crosses mints a set to you.", warn: false }
-              : { text: "Quote both sides to sit one tick inside the market.", warn: false };
+              ? { text: "Your two prices are up. Whoever takes them pays you the gap.", warn: false }
+              : { text: "Post two prices, one tick better than the crowd on each side.", warn: false };
 
-  const caption = bothResting
-    ? `Resting ${fmt(toN(mineBid!.quantity))} a side at ${toN(mineBid!.price).toFixed(3)} and ${toN(mineAsk!.price).toFixed(3)}. Each fill pair keeps ${perSet.toFixed(3)}.`
-    : `Rests ${fmt(size)} a side at ${next.bid.toFixed(3)} and ${next.ask.toFixed(3)}. Keeps ${perSet.toFixed(3)} a set.`;
+  const sideState = (mine: Resting | undefined, held: number) => {
+    if (mine) return { cls: "waiting", text: "Waiting for a taker" };
+    if (held > 0) return { cls: "taken", text: "Taken" };
+    if (!live || phase !== "trading") return { cls: "off", text: "Closed" };
+    return { cls: "next", text: isConnected ? "Not posted yet" : "Preview" };
+  };
+  const upState = sideState(mineBid, inv.up);
+  const downState = sideState(mineAsk, inv.down);
+  const crowdPct = Math.round(next.fair * 100);
 
   return (
     <main ref={root} className="pit">
@@ -490,26 +478,89 @@ export function HouseDesk() {
           {connectError ? <p className="pit-hint warn">{connectError.message}</p> : null}
         </aside>
 
-        <section className="pit-book">
-          <header className="pit-book-head">
-            <strong>The book</strong>
-            <span>{live ? `${live.asset} ${fmtInterval(live.intervalSec)}` : ""}</span>
+        <section className="bet">
+          <header className="bet-q">
+            <span className="pit-k">The bet</span>
+            <h2>
+              {live && openPx != null
+                ? `Will BTC be above ${openPx.toLocaleString("en-US", { maximumFractionDigits: 0 })} at ${stampShort(live.expiry)}?`
+                : "Waiting for the next window"}
+            </h2>
+            <p>
+              {live && yesBid !== undefined && yesAsk !== undefined
+                ? `The crowd puts it near ${crowdPct}% yes. You do not pick a side. You price both.`
+                : "You do not pick a side. You price both."}
+            </p>
           </header>
-          <ol className={`ladder ${live ? "" : "is-arming"}`}>
-            {ladder.asks.map((l, i, arr) => (
-              <Row key={l.key} side="ask" level={l} max={ladder.max} best={i === arr.length - 1} />
-            ))}
-            <li className="lad-mid">
-              <span>{live ? `mid ${next.fair.toFixed(3)}` : "finding the next window"}</span>
-              <i />
-              {live ? (
-                <span>{bothResting ? `your spread ${perSet.toFixed(3)}` : `next spread ${perSet.toFixed(3)}`}</span>
+
+          <div className="bet-sides">
+            <article className="side up">
+              <header>
+                <span className="side-name">Up</span>
+                <span className={`pill ${upState.cls}`}>{upState.text}</span>
+              </header>
+              <div className="side-you">
+                <span className="pit-k">You pay</span>
+                <strong>{upPay.toFixed(3)}</strong>
+                <em>for each UP contract</em>
+              </div>
+              <p className="side-crowd">
+                {crowdUp !== undefined ? `The crowd pays ${crowdUp.toFixed(3)}. You offer one tick more.` : "No one is bidding yet."}
+              </p>
+              {inv.up > 0 ? (
+                <p className="side-held">
+                  You hold <b>{fmt(inv.up)}</b> UP
+                </p>
               ) : null}
-            </li>
-            {ladder.bids.map((l, i) => (
-              <Row key={l.key} side="bid" level={l} max={ladder.max} best={i === 0} />
-            ))}
-          </ol>
+            </article>
+
+            <article className="side down">
+              <header>
+                <span className="side-name">Down</span>
+                <span className={`pill ${downState.cls}`}>{downState.text}</span>
+              </header>
+              <div className="side-you">
+                <span className="pit-k">You pay</span>
+                <strong>{downPay.toFixed(3)}</strong>
+                <em>for each DOWN contract</em>
+              </div>
+              <p className="side-crowd">
+                {crowdDown !== undefined ? `The crowd pays ${crowdDown.toFixed(3)}. You offer one tick more.` : "No one is bidding yet."}
+              </p>
+              {inv.down > 0 ? (
+                <p className="side-held">
+                  You hold <b>{fmt(inv.down)}</b> DOWN
+                </p>
+              ) : null}
+            </article>
+          </div>
+
+          <div className="bet-sum">
+            <span>
+              <b>{upPay.toFixed(3)}</b>
+              <i>UP</i>
+            </span>
+            <span className="op">+</span>
+            <span>
+              <b>{downPay.toFixed(3)}</b>
+              <i>DOWN</i>
+            </span>
+            <span className="op">=</span>
+            <span>
+              <b>{pairCost.toFixed(3)}</b>
+              <i>you pay a pair</i>
+            </span>
+            <span className="op">and</span>
+            <span>
+              <b>1.000</b>
+              <i>a pair pays out</i>
+            </span>
+            <span className="keep">
+              <b>+{perPair.toFixed(3)}</b>
+              <i>you keep, whatever BTC does</i>
+            </span>
+          </div>
+
           {chip ? (
             <div className="pit-chip" key={chip}>
               {chip}
@@ -518,47 +569,62 @@ export function HouseDesk() {
         </section>
 
         <aside className="pit-house">
-          <div className="pit-hold">
-            <span className="pit-k">You hold</span>
-            <strong className="pit-sets">
-              <Num v={sets} dp={sets % 1 === 0 ? 0 : 2} />
-              <em>complete set{sets === 1 ? "" : "s"}</em>
-            </strong>
-            <strong className="pit-kept">
-              +<Num v={kept + sets * perSet} dp={3} />
-              <em>spread kept</em>
-            </strong>
-            {unmatched > 0.0005 ? (
-              <span className="pit-unmatched">
-                {fmt(unmatched)} {unmatchedSide} unmatched. Flatten sells the leftover.
-              </span>
-            ) : null}
+          <div className="ledger">
+            <span className="pit-k">This window</span>
+            <div className="ledger-row">
+              <span>Pairs held</span>
+              <strong>
+                <Num v={sets} dp={sets % 1 === 0 ? 0 : 2} />
+              </strong>
+              <em>{sets > 0 ? `worth ${sets.toFixed(2)} tUSDC` : "none yet"}</em>
+            </div>
+            <div className="ledger-row">
+              <span>Unmatched</span>
+              <strong>{unmatched > 0.0005 ? `${fmt(unmatched)} ${unmatchedSide}` : "0"}</strong>
+              <em>{unmatched > 0.0005 ? "sold when you cash out" : "both sides even"}</em>
+            </div>
+            <div className="ledger-row kept">
+              <span>Spread kept</span>
+              <strong>
+                +<Num v={kept + sets * perPair} dp={3} />
+              </strong>
+              <em>tUSDC</em>
+            </div>
           </div>
 
           <div className="pit-act">
             <button type="button" className="solid" disabled={!canQuote} onClick={() => void run("quote")}>
-              {busy === "quote" ? "Quoting…" : bothResting ? "Requote both sides" : "Quote both sides"}
+              {busy === "quote" ? "Posting…" : bothResting ? "Repost both prices" : "Quote both sides"}
             </button>
-            <p className="pit-caption">{caption}</p>
+            <p className="pit-caption">
+              Posts {fmt(size)} contracts on each side at {upPay.toFixed(3)} and {downPay.toFixed(3)}. Nothing is spent until
+              someone takes a price.
+            </p>
             <div className="pit-tune">
               <label>
-                Size
+                Contracts a side
                 <input type="text" inputMode="decimal" value={sizeText} onChange={(e) => setSizeText(e.target.value)} />
               </label>
               <label>
-                Half spread
-                <input type="text" inputMode="decimal" value={spreadText} onChange={(e) => setSpreadText(e.target.value)} />
+                Max cut per pair
+                <input type="text" inputMode="decimal" value={cutText} onChange={(e) => setCutText(e.target.value)} />
               </label>
             </div>
-            <div className="pit-more">
-              <button type="button" className="ghost" disabled={!!busy || !live} onClick={() => void run("flatten")}>
-                {busy === "flatten" ? "Flattening…" : "Flatten"}
-              </button>
-              <button type="button" className="ghost" disabled={!!busy} onClick={() => void run("redeem")}>
-                {busy === "redeem" ? "Redeeming…" : "Redeem settled"}
-              </button>
+            <div className="acts">
+              <div>
+                <button type="button" className="ghost" disabled={!!busy || !live} onClick={() => void run("flatten")}>
+                  {busy === "flatten" ? "Cashing out…" : "Cash out"}
+                </button>
+                <small>Pairs back for 1.00 each. Unmatched sold at the market.</small>
+              </div>
+              <div>
+                <button type="button" className="ghost" disabled={!!busy} onClick={() => void run("redeem")}>
+                  {busy === "redeem" ? "Collecting…" : "Collect payouts"}
+                </button>
+                <small>From windows that already settled.</small>
+              </div>
               <button type="button" className="text" disabled={!!busy || !live} onClick={() => void run("pull")}>
-                {busy === "pull" ? "Pulling…" : "Pull quotes"}
+                {busy === "pull" ? "Taking down…" : "Take my prices down"}
               </button>
             </div>
           </div>
@@ -566,7 +632,7 @@ export function HouseDesk() {
           <ol className="pit-log">
             {events.length === 0 ? (
               <li>
-                <span>Quotes, fills and merges will show up here.</span>
+                <span>What happens to your prices will show up here.</span>
               </li>
             ) : (
               events.map((e) => (
@@ -579,46 +645,7 @@ export function HouseDesk() {
           </ol>
         </aside>
       </section>
-
     </main>
-  );
-}
-
-function Row({ side, level, max, best }: { side: "ask" | "bid"; level: Level; max: number; best: boolean }) {
-  const cls = [
-    "lad-row",
-    side,
-    level.mine ? "you" : "",
-    level.ghost ? "ghost" : "",
-    level.empty ? "empty" : "",
-    best && !level.empty ? "best" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  if (level.empty) {
-    return (
-      <li className={cls}>
-        <span className="lad-px" />
-        <span className="lad-lane" />
-        <span className="lad-qty" />
-      </li>
-    );
-  }
-  // Square root keeps a five lot quote visible next to a four hundred lot wall.
-  const w = Math.max(0.06, Math.min(1, Math.sqrt(level.qty / max)));
-  return (
-    <li className={cls}>
-      <span className="lad-px">{level.price.toFixed(3)}</span>
-      <span className="lad-lane">
-        <i className="lad-bar" style={{ ["--w" as string]: String(w) }} />
-        {level.mine || level.ghost ? (
-          <span className="lad-tag">
-            <span>{level.ghost ? "Next" : "You"}</span> {side === "bid" ? "BUY_YES" : "BUY_NO"}
-          </span>
-        ) : null}
-      </span>
-      <span className="lad-qty">{fmt(level.qty)}</span>
-    </li>
   );
 }
 
