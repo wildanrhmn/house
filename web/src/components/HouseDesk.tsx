@@ -5,6 +5,7 @@ import { useLivePrice, useWatchPrice } from "@somnia-chain/markets-sdk/react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import Link from "next/link";
+import { HouseLogo } from "./HouseLogo";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPublicClient, erc20Abi, http, type Address } from "viem";
 import { useAccount, useConnect, useDisconnect, useWalletClient } from "wagmi";
@@ -91,6 +92,19 @@ export function HouseDesk() {
     const id = setInterval(() => setNow(Date.now() / 1000), 250);
     return () => clearInterval(id);
   }, []);
+
+  // The tab title follows the window, so the desk reads at a glance from
+  // another tab: "12:41 BTC 15m, HOUSE".
+  const secondsLeft = Math.max(0, Math.floor(remaining));
+  useEffect(() => {
+    if (!live) {
+      document.title = "Desk, HOUSE";
+      return;
+    }
+    const left = phase === "locked" ? "locked" : clock(secondsLeft);
+    const mine = resting.length >= 2 ? "resting, " : "";
+    document.title = `${mine}${left} ${live.asset} ${fmtInterval(live.intervalSec)}, HOUSE`;
+  }, [live, secondsLeft, phase, resting.length]);
 
   useGSAP(
     () => {
@@ -379,7 +393,7 @@ export function HouseDesk() {
 
       <header className="pit-top">
         <Link className="pit-mark" href="/">
-          HOUSE
+          <HouseLogo size={18} />
         </Link>
         <p className="pit-status">
           <i className={`pit-lamp ${phase === "trading" ? "is-live" : phase === "locking" ? "is-lock" : ""}`} />

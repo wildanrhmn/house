@@ -45,6 +45,10 @@ npm run demo
 
 Earlier the same day a third-party bot lifted a resting HOUSE quote on its own, `0x14295dd86137d448411d864635743a59796df5f284e595879f70109268941af0`, which the indexer records as MINT_A_PAIR with HOUSE as maker.
 
+## Deploy
+
+The web app deploys to Vercel from the `web` folder with no build settings beyond the defaults. Set `NEXT_PUBLIC_SITE_URL` to the public origin so link previews carry the right URL. Logo options live at `/demo/logo`, with a 1024 by 1024 export for the submission form.
+
 ## Stack
 
 - Next.js desk on port 3000 (indexer CORS is allowed for that origin)

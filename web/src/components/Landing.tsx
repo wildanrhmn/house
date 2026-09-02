@@ -9,6 +9,7 @@ import { SmoothScroll } from "./SmoothScroll";
 import { HowItWorks } from "./HowItWorks";
 import { HeroBook } from "./HeroBook";
 import { Floor } from "./Floor";
+import { HouseLogo } from "./HouseLogo";
 
 gsap.registerPlugin(useGSAP);
 
@@ -200,7 +201,9 @@ export function Landing() {
       </div>
 
       <nav className="land-nav">
-        <span className="land-nav-mark">HOUSE</span>
+        <span className="land-nav-mark">
+          <HouseLogo size={17} />
+        </span>
         <div className="land-nav-links">
           <a href="#what">What</a>
           <a href="#how">How</a>
