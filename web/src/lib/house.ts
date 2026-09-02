@@ -78,19 +78,38 @@ export async function cancelOwn(
   exchange: SomniaMarkets,
   window: HouseWindow,
 ): Promise<number> {
-  const me = exchange.walletAddress;
+  const me = exchange.walletAddress as Address | undefined;
   if (!me) return 0;
-  const open = await exchange.client.getOpenOrders(me, { pool: window.pool, limit: 50 });
+  // Chain head, not the indexer: a quote placed seconds ago must be cancellable.
+  const ids = await exchange.client.getOwnOpenOrdersOnchain(window.pool as Address, me);
   let n = 0;
-  for (const o of open) {
+  for (const id of ids) {
     try {
-      await exchange.trader.cancelOrder({ pool: window.pool, orderId: o.orderId });
+      await exchange.trader.cancelOrder({ pool: window.pool, orderId: id.toString() });
       n += 1;
     } catch (err) {
-      console.warn("cancel failed", o.orderId, err);
+      console.warn("cancel failed", id.toString(), err);
     }
   }
   return n;
+}
+
+export type Resting = { orderId: bigint; isBid: boolean; price: bigint; quantity: bigint };
+
+// An owner's resting quotes read at chain head. BUY_YES rests as a bid and
+// BUY_NO as an ask on the YES book, so the lower price is the bid.
+export async function restingQuotes(exchange: SomniaMarkets, pool: Address, owner: Address) {
+  const ids = await exchange.client.getOwnOpenOrdersOnchain(pool, owner);
+  const orders: Resting[] = [];
+  for (const id of ids) {
+    const o = await exchange.client.getOrderOnchain(pool, id);
+    if (!o || o.quantityRemaining === 0n) continue;
+    orders.push({ orderId: id, isBid: o.isBid, price: o.price, quantity: o.quantityRemaining });
+  }
+  orders.sort((a, b) => (a.price < b.price ? -1 : a.price > b.price ? 1 : 0));
+  const bid = orders.length ? orders[0] : undefined;
+  const ask = orders.length > 1 ? orders[orders.length - 1] : undefined;
+  return { orders, bid, ask };
 }
 
 export async function quoteBothSides(
@@ -115,7 +134,9 @@ export async function quoteBothSides(
   }
 
   const onchain = await exchange.client.getMarketOnchain(window.marketId);
-  const hold = Math.min(90, Math.max(25, Math.floor(window.intervalSec * 0.1)));
+  // Resting quotes die on their own after this long. The loop replaces them
+  // sooner; the desk and demo rely on Flatten or the next requote.
+  const hold = Math.min(300, Math.max(60, Math.floor(window.intervalSec * 0.3)));
   const expiry = expireNs(Number(onchain.expiry), hold);
   const pool = window.pool as Address;
 
@@ -158,25 +179,51 @@ export async function quoteBothSides(
   return { upId, downId, skipped };
 }
 
+export type QuoteOutcome = { plan: QuotePlan | null; upId?: string; downId?: string; skipped: string[] };
+
+// A side that would cross means the book moved between plan and placement.
+// Start over from a fresh book rather than leave one side resting alone.
+export async function quoteWithRetry(
+  exchange: SomniaMarkets,
+  window: HouseWindow,
+  halfSpread = DEFAULT_HALF_SPREAD,
+  size = DEFAULT_QUOTE_SIZE,
+  attempts = 3,
+): Promise<QuoteOutcome> {
+  let out: QuoteOutcome = { plan: null, skipped: [] };
+  for (let i = 0; i < attempts; i++) {
+    const plan = await planQuotes(exchange, window, halfSpread, size);
+    if (!plan) break;
+    const r = await quoteBothSides(exchange, window, plan);
+    out = { plan, ...r };
+    if (!r.skipped.some((s) => s.includes("would cross"))) break;
+    await cancelOwn(exchange, window);
+  }
+  return out;
+}
+
 // A filled two-sided quote leaves equal YES and NO. Burning that pair returns
 // 1.00 of collateral per set, which is where the spread is realized.
-export async function mergeSets(exchange: SomniaMarkets, window: HouseWindow): Promise<bigint> {
+export async function mergeSets(
+  exchange: SomniaMarkets,
+  window: HouseWindow,
+): Promise<{ amount: bigint; hash?: string }> {
   const me = exchange.walletAddress;
-  if (!me) return 0n;
+  if (!me) return { amount: 0n };
   const oc = await exchange.client.getMarketOnchain(window.marketId);
   const { up, down } = await outcomeBalances(exchange, oc, me);
   const amount = up < down ? up : down;
-  if (amount === 0n) return 0n;
+  if (amount === 0n) return { amount: 0n };
   const res = await exchange.trader.burnSet({
     pool: window.pool as Address,
     amount,
     outcomeToken: oc.outcomeToken,
   });
   if (res.receipt?.status === "reverted") throw new Error("Merge reverted");
-  return amount;
+  return { amount, hash: res.receipt?.transactionHash };
 }
 
-export type FlattenResult = { merged: bigint; soldUp: bigint; soldDown: bigint };
+export type FlattenResult = { merged: bigint; mergeTx?: string; soldUp: bigint; soldDown: bigint };
 
 export async function flattenInventory(
   exchange: SomniaMarkets,
@@ -187,7 +234,9 @@ export async function flattenInventory(
   const me = exchange.walletAddress;
   if (!me) return out;
 
-  out.merged = await mergeSets(exchange, window);
+  const merge = await mergeSets(exchange, window);
+  out.merged = merge.amount;
+  out.mergeTx = merge.hash;
 
   const oc = await exchange.client.getMarketOnchain(window.marketId);
   const { up, down } = await outcomeBalances(exchange, oc, me);
@@ -195,33 +244,29 @@ export async function flattenInventory(
   const pool = window.pool as Address;
   const expiry = expireNs(Number(oc.expiry), 30);
 
-  if (up >= params.minQuantity) {
-    const qty = snapLot(up, params.lotSize);
-    if (qty > 0n) {
-      await exchange.trader.placeOrder({
+  // SDK writes resolve even when the pool reverts, so count a sale only on success.
+  const sell = async (side: "SELL_YES" | "SELL_NO", price: bigint, qty: bigint) => {
+    try {
+      const r = await exchange.trader.placeOrder({
         pool,
-        side: "SELL_YES",
-        price: params.tickSize,
+        side,
+        price,
         quantity: qty,
         orderType: ORDER_TYPE.MARKET,
         expireTimestampNs: expiry,
       });
-      out.soldUp = qty;
+      return receiptOk(r) ? qty : 0n;
+    } catch {
+      return 0n;
     }
+  };
+  if (up >= params.minQuantity) {
+    const qty = snapLot(up, params.lotSize);
+    if (qty > 0n) out.soldUp = await sell("SELL_YES", params.tickSize, qty);
   }
   if (down >= params.minQuantity) {
     const qty = snapLot(down, params.lotSize);
-    if (qty > 0n) {
-      await exchange.trader.placeOrder({
-        pool,
-        side: "SELL_NO",
-        price: probabilityToPrice(0.99, window.quoteDecimals),
-        quantity: qty,
-        orderType: ORDER_TYPE.MARKET,
-        expireTimestampNs: expiry,
-      });
-      out.soldDown = qty;
-    }
+    if (qty > 0n) out.soldDown = await sell("SELL_NO", probabilityToPrice(0.99, window.quoteDecimals), qty);
   }
   return out;
 }

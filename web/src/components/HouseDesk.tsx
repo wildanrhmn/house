@@ -19,7 +19,7 @@ import {
   cancelOwn,
   flattenInventory,
   planQuotes,
-  quoteBothSides,
+  quoteWithRetry,
   readInventory,
   redeemSettled,
   type QuotePlan,
@@ -131,13 +131,12 @@ export function HouseDesk() {
       let text = "";
       if (label === "quote") {
         if (!live) return;
-        const p = (await planQuotes(signed, live, spread, size)) ?? plan;
-        if (!p) {
+        await cancelOwn(signed, live);
+        const result = await quoteWithRetry(signed, live, spread, size);
+        if (!result.plan) {
           setNote("Window is too close to lock, or the book has no fair.");
           return;
         }
-        await cancelOwn(signed, live);
-        const result = await quoteBothSides(signed, live, { ...p, size });
         const bits = [
           result.upId ? `Up #${result.upId}` : null,
           result.downId ? `Down #${result.downId}` : null,

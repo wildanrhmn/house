@@ -20,7 +20,8 @@ export const PREFERRED_INTERVAL_SEC = 900;
 export const PREFERRED_ASSET = "BTC";
 export const DEFAULT_HALF_SPREAD = 0.02;
 export const DEFAULT_QUOTE_SIZE = 5;
-export const HEADROOM_FRACTION = 0.12;
+// The last fifth of a window swings hard as the outcome settles. Do not quote into it.
+export const HEADROOM_FRACTION = 0.2;
 export const MIN_HEADROOM_SEC = 20;
 
 export const TUSDC = (ADDRESSES.testUsdc ?? ADDRESSES.collateral) as Address;

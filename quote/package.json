@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
-    "take": "tsx src/take.ts"
+    "take": "tsx src/take.ts",
+    "flatten": "tsx src/flatten.ts",
+    "demo": "tsx src/demo.ts"
   },
   "dependencies": {
     "@somnia-chain/markets-sdk": "0.29.0",

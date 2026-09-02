@@ -7,12 +7,15 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
 
-// Live write on Shannon, 2 Sep 2026: PostOnly BUY_YES 0.05 on BTC 15m, then cancel.
-const TX = "0xe3e94725a488550c9a585d546a83f07914adb6ae0eef37e931c07969cad9938b";
-const ORDER_ID = "147573952589676494756";
-const WALLET = "0x857b7EfE554D39Ac226F556b982e074AB10995a6";
+// One full HOUSE loop on Shannon, 2 Sep 2026, market 0x...11199 (BTC 15m).
+const TX_LIFT = "0x76f7625ce7fa6c1264fbbe752d1d2a6a5a064cc871706eb56028fa63c2bb77a2";
+const TX_HIT = "0xcb589ed80a98999a8a82e51f102475df97d8e5731f71df8d1e8d51f87e1888db";
+const TX_MERGE = "0xed699ecef467211225f8c333588ac16aef09424809b080bd62665b018c97c4a1";
+const TX_BOT = "0x14295dd86137d448411d864635743a59796df5f284e595879f70109268941af0";
+const MAKER = "0x857b7EfE554D39Ac226F556b982e074AB10995a6";
+const TAKER = "0x3f0fd9FeF2673AEFd622c8B797c1BD3D0AB784eC";
 const VENUE = "0x679795a0195a1b76cdebb7c51d74e058aee92919b8c3389af86ef24535e8a28c";
-const EXPLORER_TX = `https://shannon-explorer.somnia.network/tx/${TX}`;
+const EXPLORER = "https://shannon-explorer.somnia.network/tx/";
 
 const short = (s: string, head: number, tail: number) => `${s.slice(0, head)}…${s.slice(-tail)}`;
 
@@ -21,45 +24,51 @@ const ROWS = [
     k: "Technical",
     w: 25,
     claim: "Real SDK writes, gated on chain state.",
-    ev: "Windows come from listLiveBinaryMarkets. Every write checks the on-chain status first. PostOnly BUY_YES and BUY_NO carry a mandatory expiry, prices and sizes are snapped to tick and lot, cancel and replace, IOC flatten, redeem of Finalized markets. markets-sdk 0.29.0.",
+    ev: "Windows come from listLiveBinaryMarkets. Every write checks the on-chain status first. PostOnly BUY_YES and BUY_NO carry a mandatory expiry, prices and sizes are snapped to tick and lot, cancel and replace read open orders at chain head, IOC flatten, burnSet merge, redeem of Finalized markets. markets-sdk 0.29.0.",
   },
   {
     k: "Innovation",
     w: 20,
     claim: "The mint-a-pair path is the product, not a feature.",
-    ev: "Two opposite buyers cross with no seller and the pool mints the set. Most entries take the book. HOUSE makes it, from a normal wallet, with zero inventory. Not ec-maker: nothing is minted up front and no YES is sold.",
+    ev: "Two opposite buyers cross with no seller and the pool mints the set. Most entries take the book. HOUSE makes it, from a normal wallet, with zero inventory, and merges the pair back to collateral to bank the spread. Not ec-maker: nothing is minted up front and no YES is sold.",
   },
   {
     k: "UX",
     w: 20,
     claim: "One screen, one verb, honest risk.",
-    ev: "Clock, BTC against the open, the book, your two quotes, inventory, Flatten and Redeem. Locked, empty and void windows are handled. Windows too close to lock are skipped, scaled to the interval.",
+    ev: "Clock, BTC against the open, the book, your two quotes, sets held, spread kept, Flatten and Redeem. Locked, empty and void windows are handled. The last fifth of a window is never quoted into.",
   },
   {
     k: "Ecosystem impact",
     w: 20,
     claim: "Depth where DreamDEX is thin.",
-    ev: "Every HOUSE quote is two resting orders near mid. Fills mint complete sets, so open interest grows instead of changing hands. The Node quoter keeps quoting after the demo ends. Builder fees are the path to a business.",
+    ev: "Every HOUSE quote is two resting orders one tick inside the market. Fills mint complete sets, so open interest grows instead of changing hands. A third-party bot already lifted a HOUSE quote on its own. The Node quoter keeps quoting after the demo ends. Builder fees are the path to a business.",
   },
   {
     k: "Demo",
     w: 15,
-    claim: "The loop is real on Shannon, not a slide.",
-    ev: "Connect a Shannon wallet on the desk, quote both sides once per window, get hit, flatten, redeem. Two to three minutes: the problem, the mechanic, a live transaction, what comes next.",
+    claim: "The loop ran on Shannon. The receipt is on the right.",
+    ev: "One command rested both sides, a second wallet crossed both, five complete sets landed in HOUSE, the merge returned collateral, and the spread came out to the cent. Then the same loop on the desk with a browser wallet, two to three minutes.",
   },
 ];
 
-const RECEIPT: [string, string][] = [
+type Line = [string, string, string?];
+
+const RECEIPT: Line[] = [
   ["Chain", "Somnia Shannon 50312"],
   ["Venue", `DreamDEX ${short(VENUE, 6, 4)}`],
-  ["Market", "BTC 15m, Trading"],
-  ["Order", "PostOnly BUY_YES 0.05"],
-  ["Order id", short(ORDER_ID, 5, 4)],
-  ["Tx", short(TX, 8, 6)],
-  ["Cancel", "success"],
-  ["Grid", "tick 0.001, lot 0.001"],
+  ["Market", "BTC 15m, id …11199"],
+  ["Rest", "BUY_YES 0.036, Up ask 0.055"],
+  ["Size", "5 contracts a side"],
+  ["Lift ask", short(TX_LIFT, 8, 6), TX_LIFT],
+  ["Hit bid", short(TX_HIT, 8, 6), TX_HIT],
+  ["Minted", "5 complete sets to HOUSE"],
+  ["Merge", short(TX_MERGE, 8, 6), TX_MERGE],
+  ["Spread kept", "+0.095 tUSDC, 5 x 0.019"],
+  ["Bot fill", short(TX_BOT, 8, 6), TX_BOT],
+  ["Maker", short(MAKER, 6, 4)],
+  ["Taker", short(TAKER, 6, 4)],
   ["SDK", "markets-sdk 0.29.0"],
-  ["Wallet", short(WALLET, 6, 4)],
 ];
 
 export function Floor() {
@@ -158,16 +167,16 @@ export function Floor() {
               <header>
                 <strong>HOUSE</strong>
                 <span>Somnia Shannon</span>
-                <span>Live write, 02 Sep 2026</span>
+                <span>Live loop, 02 Sep 2026</span>
               </header>
               <dl>
-                {RECEIPT.map(([k, v]) => (
+                {RECEIPT.map(([k, v, href]) => (
                   <div key={k}>
                     <dt>{k}</dt>
                     <i className="lead" />
                     <dd>
-                      {k === "Tx" ? (
-                        <a href={EXPLORER_TX} target="_blank" rel="noreferrer">
+                      {href ? (
+                        <a href={`${EXPLORER}${href}`} target="_blank" rel="noreferrer">
                           {v}
                         </a>
                       ) : (

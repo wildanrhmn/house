@@ -33,6 +33,18 @@ npm run take
 
 The loop: quote both sides, let the taker cross both, watch Sets held rise on the desk, then Flatten. Flatten cancels, merges every balanced YES and NO pair back to collateral, and sells any leftover. The merge is where the spread is realized.
 
+One command runs the whole loop from Node with both keys, rounds until the maker holds a complete set, then flattens:
+
+```bash
+npm run demo
+```
+
+## Proof on Shannon, 2 Sep 2026
+
+`npm run demo` on BTC 15m market `0x...11199`. HOUSE rested BUY_YES at 0.036 and BUY_NO at an implied Up ask of 0.055, 5 contracts a side. The taker lifted the ask in `0x76f7625ce7fa6c1264fbbe752d1d2a6a5a064cc871706eb56028fa63c2bb77a2` and hit the bid in `0xcb589ed80a98999a8a82e51f102475df97d8e5731f71df8d1e8d51f87e1888db`. Each cross had no seller, so the pool minted the pair. HOUSE held 5 complete sets, merged them back to collateral in `0xed699ecef467211225f8c333588ac16aef09424809b080bd62665b018c97c4a1`, and its collateral rose by 0.095 tUSDC, five times the 0.019 spread.
+
+Earlier the same day a third-party bot lifted a resting HOUSE quote on its own, `0x14295dd86137d448411d864635743a59796df5f284e595879f70109268941af0`, which the indexer records as MINT_A_PAIR with HOUSE as maker.
+
 ## Stack
 
 - Next.js desk on port 3000 (indexer CORS is allowed for that origin)

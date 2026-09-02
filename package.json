@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "npm run dev -w web",
     "quote": "tsx quote/src/index.ts",
-    "take": "tsx quote/src/take.ts"
+    "take": "tsx quote/src/take.ts",
+    "flatten": "tsx quote/src/flatten.ts",
+    "demo": "tsx quote/src/demo.ts"
   }
 }
