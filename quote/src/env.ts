@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { marketFromKey, type Market } from "../../web/src/lib/config.ts";
+
+// HOUSE_MARKET=eth-1h picks the market, same keys as /desk?m=. Default BTC 15m.
+export function marketFromEnv(): Market {
+  return marketFromKey(process.env.HOUSE_MARKET);
+}
 
 // One key from the repo root .env. The value is returned, never logged.
 export function keyFromEnv(name: string): `0x${string}` {

@@ -139,6 +139,90 @@ input:focus-visible {
   text-decoration: none;
 }
 
+.pit-mkt {
+  position: relative;
+}
+
+.pit-mkt-btn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--tape);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.pit-mkt-btn span {
+  color: var(--muted);
+}
+
+.pit-mkt-btn::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  margin-left: 2px;
+  border-right: 1px solid var(--muted);
+  border-bottom: 1px solid var(--muted);
+  transform: translateY(-2px) rotate(45deg);
+}
+
+.pit-mkt-btn:hover,
+.pit-mkt.is-open .pit-mkt-btn {
+  border-color: rgb(239 230 214 / 0.16);
+}
+
+.pit-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  min-width: 264px;
+  padding: 14px 16px 12px;
+  border: 1px solid rgb(239 230 214 / 0.14);
+  background: rgb(17 15 34 / 0.96);
+  box-shadow: 0 18px 40px rgb(0 0 0 / 0.4);
+  backdrop-filter: blur(8px);
+}
+
+.pit-menu-col {
+  display: grid;
+  gap: 2px;
+}
+
+.pit-menu-col .pit-k {
+  margin-bottom: 6px;
+}
+
+.pit-menu-col button {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--chalk);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pit-menu-col button:hover {
+  background: rgb(239 230 214 / 0.06);
+}
+
+.pit-menu-col button.is-on {
+  color: var(--ember);
+  background: rgb(232 160 96 / 0.08);
+}
+
 .pit-wallet {
   margin-left: auto;
   display: flex;
@@ -1124,7 +1208,7 @@ input:focus-visible {
 
 .win-lane {
   position: absolute;
-  inset: 0;
+  inset: 0 -14px;
   overflow: clip;
   pointer-events: none;
 }

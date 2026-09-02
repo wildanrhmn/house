@@ -18,7 +18,7 @@ import {
   restingQuotes,
 } from "../../web/src/lib/house.ts";
 import { expireNs, snapLot, snapTick } from "../../web/src/lib/quoting.ts";
-import { envNumber, keyFromEnv, short } from "./env.ts";
+import { envNumber, keyFromEnv, marketFromEnv, short } from "./env.ts";
 
 // The whole HOUSE loop in one process. Each round: the maker rests both
 // sides, the taker immediately crosses each resting quote, sized to sweep
@@ -31,13 +31,14 @@ const MARGIN = envNumber("TAKE_MARGIN", 0.02);
 const SWEEP_CAP = envNumber("TAKE_SWEEP_CAP", 400);
 const ROUNDS = envNumber("DEMO_ROUNDS", 4);
 const KEEP = process.argv.includes("--keep");
+const MARKET = marketFromEnv();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const min = (a: bigint, b: bigint) => (a < b ? a : b);
 
 async function windowWithRoom(exchange: ReturnType<typeof createSignedExchange>) {
   for (let i = 0; i < 40; i++) {
-    const w = await discoverWindow(exchange);
+    const w = await discoverWindow(exchange, MARKET.asset, MARKET.intervalSec);
     if (w && w.expiry - Date.now() / 1000 > minLeftSec(w.intervalSec) + 90) return w;
     console.log("waiting for a window with room to quote");
     await sleep(15_000);

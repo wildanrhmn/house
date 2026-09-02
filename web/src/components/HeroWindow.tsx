@@ -102,8 +102,8 @@ export function HeroWindow() {
         const l = R(ledgerN);
         const cw = chipUp.offsetWidth;
         const ch = chipUp.offsetHeight;
-        const upLeft = su.left - w.left;
-        const downLeft = sd.right - w.left - cw;
+        const upLeft = su.left - w.left + 10;
+        const downLeft = sd.right - w.left - cw - 10;
         return {
           cw,
           ch,

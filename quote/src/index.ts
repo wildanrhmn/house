@@ -3,12 +3,13 @@ import { DEFAULT_HALF_SPREAD, DEFAULT_QUOTE_SIZE } from "../../web/src/lib/confi
 import { discoverWindow, type HouseWindow } from "../../web/src/lib/discover.ts";
 import { createSignedExchange } from "../../web/src/lib/exchange.ts";
 import { cancelOwn, quoteWithRetry } from "../../web/src/lib/house.ts";
-import { envNumber, keyFromEnv, short } from "./env.ts";
+import { envNumber, keyFromEnv, marketFromEnv, short } from "./env.ts";
 
 const LOOP_MS = 20_000;
 const ONCE = process.argv.includes("--once");
 const HALF_SPREAD = envNumber("HOUSE_HALF_SPREAD", DEFAULT_HALF_SPREAD);
 const SIZE = envNumber("HOUSE_SIZE", DEFAULT_QUOTE_SIZE);
+const MARKET = marketFromEnv();
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -25,9 +26,9 @@ async function topOfBook(exchange: ReturnType<typeof createSignedExchange>, live
 }
 
 async function tick(exchange: ReturnType<typeof createSignedExchange>, lastId: string | null) {
-  const live = await discoverWindow(exchange);
+  const live = await discoverWindow(exchange, MARKET.asset, MARKET.intervalSec);
   if (!live) {
-    console.log("no live DreamDEX BTC 15m window");
+    console.log(`no live DreamDEX ${MARKET.label} window`);
     return lastId;
   }
 
@@ -78,7 +79,7 @@ async function main() {
     stop = true;
     console.log("stopping");
     try {
-      const live = await discoverWindow(exchange);
+      const live = await discoverWindow(exchange, MARKET.asset, MARKET.intervalSec);
       if (live) await cancelOwn(exchange, live);
     } catch (err) {
       console.warn("cancel on stop failed", err);

@@ -15,7 +15,7 @@ Post two prices, wait for takers, keep the gap. No side to pick, no tokens to st
 
 ---
 
-DreamDEX Event Contracts are fifteen minute binaries on BTC and ETH, settled on Somnia. Every product built on them so far is a taker: pick Up or Down, hope. HOUSE is the other seat. It rests a buy on each side of the book at once, one tick better than the crowd. When someone crosses either price the pool mints a fresh YES and NO pair with no seller involved, and after both cross you hold a complete pair that is worth exactly 1.00 whatever BTC does. You paid less than 1.00 for it. Cash out hands the pair back to the pool for the full 1.00 and the difference is yours.
+DreamDEX Event Contracts are short binaries on BTC and ETH, five minutes to a day, settled on Somnia. Every product built on them so far is a taker: pick Up or Down, hope. HOUSE is the other seat. It rests a buy on each side of the book at once, one tick better than the crowd. When someone crosses either price the pool mints a fresh YES and NO pair with no seller involved, and after both cross you hold a complete pair that is worth exactly 1.00 whatever BTC does. You paid less than 1.00 for it. Cash out hands the pair back to the pool for the full 1.00 and the difference is yours.
 
 ## The problem
 
@@ -31,6 +31,7 @@ HOUSE turns it into one button and a wallet signature. The quotes are real order
 | **Cash out** | Cancels resting quotes, hands every YES and NO pair back to the pool for 1.00 each, sells any unmatched leftover at the market. |
 | **Collect payouts** | Redeems winning tokens from windows that already settled. |
 | **Take down** | Cancels your resting prices, in one batch transaction. |
+| **Market picker** | All ten DreamDEX markets, BTC and ETH at 5m, 15m, 1h, 4h and 1d. The choice lives in the URL, so `/desk?m=eth-1h` opens straight onto ETH, 1 hour. Default is BTC 15m. |
 | **`/desk?watch=0x…`** | Follows any wallet read-only. How to watch the Node quoter, or show a judge. |
 
 The same engine runs unattended from Node as `npm run quote`, and `npm run demo` plays the whole loop with a second wallet as the taker.
@@ -159,7 +160,7 @@ house/
 ├─ web/                 Next.js 15 app
 │  └─ src/
 │     ├─ app/           / landing, /desk, /demo/logo, icon
-│     ├─ components/    Landing, HeroBook, HowItWorks, Floor, HouseDesk, logo marks
+│     ├─ components/    Landing, HeroWindow, HowItWorks, Floor, HouseDesk, logo marks
 │     └─ lib/           config, discover, quoting math, house (plan, quote, merge, flatten, redeem)
 ├─ quote/
 │  └─ src/              quote (maker loop), take (demo taker), flatten, demo (whole loop), env
@@ -173,7 +174,7 @@ house/
 |---|---|
 | **Web** | Next.js 15, React 19, wagmi + viem, GSAP, Lenis |
 | **Engine** | `@somnia-chain/markets-sdk` 0.29.0, unified chain-head reads and PostOnly writes |
-| **Venue** | DreamDEX BinaryPool, BTC 15m, venue `0x6797…a28c` |
+| **Venue** | DreamDEX BinaryPool, BTC and ETH, 5m to 1d windows, venue `0x6797…a28c` |
 | **Chain** | Somnia Shannon, chainId 50312, tUSDC collateral |
 | **Scripts** | Node 22, tsx |
 
@@ -209,6 +210,8 @@ npm run dev            # landing on :3000, desk on :3000/desk
 | `npm run take` | Demo taker. Crosses both resting quotes. `--dry` plans only, `--faucet` mints tUSDC first, `--faucet-only` stops there. |
 | `npm run flatten` | Maker cash out from Node. `--dry` prints inventory and collateral. |
 | `npm run demo` | The whole loop in one process. Rounds until the maker holds a pair, then flattens. `--keep` leaves the pair in the wallet so the desk can show it. |
+
+`HOUSE_MARKET=eth-1h` points any of them at another market, same keys as the desk URL. Default BTC 15m.
 
 Deploys to Vercel from `web` with default settings. Set `NEXT_PUBLIC_SITE_URL` to the public origin. Logo options and the 1024 submission asset are at `/demo/logo`.
 

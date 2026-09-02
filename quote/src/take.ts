@@ -5,7 +5,7 @@ import { discoverWindow } from "../../web/src/lib/discover.ts";
 import { createSignedExchange } from "../../web/src/lib/exchange.ts";
 import { restingQuotes } from "../../web/src/lib/house.ts";
 import { expireNs, snapLot, snapTick } from "../../web/src/lib/quoting.ts";
-import { envNumber, keyFromEnv, short } from "./env.ts";
+import { envNumber, keyFromEnv, marketFromEnv, short } from "./env.ts";
 
 // The demo taker. It crosses both HOUSE quotes with immediate or cancel orders.
 // Each cross has no seller, so the pool mints a complete set into HOUSE.
@@ -14,6 +14,7 @@ import { envNumber, keyFromEnv, short } from "./env.ts";
 
 const DRY = process.argv.includes("--dry");
 const FAUCET = process.argv.includes("--faucet");
+const MARKET = marketFromEnv();
 const SIZE = envNumber("TAKE_SIZE", 5);
 const MARGIN = envNumber("TAKE_MARGIN", 0.02);
 
@@ -39,9 +40,9 @@ async function main() {
     if (process.argv.includes("--faucet-only")) return;
   }
 
-  const live = await discoverWindow(exchange);
+  const live = await discoverWindow(exchange, MARKET.asset, MARKET.intervalSec);
   if (!live) {
-    console.log("no live DreamDEX BTC 15m window");
+    console.log(`no live DreamDEX ${MARKET.label} window`);
     return;
   }
   const oc = await exchange.client.getMarketOnchain(live.marketId);

@@ -17,6 +17,7 @@ import {
   TUSDC,
   minLeftSec,
 } from "@/lib/config";
+import { DEFAULT_MARKET, MARKET_ASSETS, MARKETS, intervalWords, marketFromKey, type Market } from "@/lib/config";
 import { discoverWindow, openingPrice, type HouseWindow } from "@/lib/discover";
 import { createSignedExchange, getReadExchange } from "@/lib/exchange";
 import {
@@ -41,6 +42,8 @@ export function HouseDesk() {
   const root = useRef<HTMLElement>(null);
   const [live, setLive] = useState<HouseWindow | null>(null);
   const [openPx, setOpenPx] = useState<number | null>(null);
+  const [market, setMarket] = useState<Market>(DEFAULT_MARKET);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [inv, setInv] = useState({ up: 0, down: 0 });
   const [book, setBook] = useState<BinaryOrderBook>(EMPTY_BOOK);
   const [series, setSeries] = useState<Array<{ t: number; p: number }>>([]);
@@ -70,8 +73,10 @@ export function HouseDesk() {
   // watches the Node quoter. Actions still need a connected wallet.
   const [watch, setWatch] = useState<Address | undefined>(undefined);
   useEffect(() => {
-    const w = new URLSearchParams(window.location.search).get("watch");
+    const params = new URLSearchParams(window.location.search);
+    const w = params.get("watch");
     if (w && /^0x[0-9a-fA-F]{40}$/.test(w)) setWatch(w as Address);
+    if (params.get("m")) setMarket(marketFromKey(params.get("m")));
   }, []);
   const address = connected ?? watch;
 
@@ -126,7 +131,7 @@ export function HouseDesk() {
   const refreshWindow = useCallback(async () => {
     try {
       const exchange = getReadExchange();
-      const next = await discoverWindow(exchange);
+      const next = await discoverWindow(exchange, market.asset, market.intervalSec);
       setLive(next);
       if (next) {
         if (lastMarket.current && lastMarket.current !== next.marketId) {
@@ -141,13 +146,46 @@ export function HouseDesk() {
     } catch (err) {
       log(err instanceof Error ? err.message : String(err), "warn");
     }
-  }, [log]);
+  }, [log, market]);
 
   useEffect(() => {
     void refreshWindow();
     const id = setInterval(() => void refreshWindow(), 12_000);
     return () => clearInterval(id);
   }, [refreshWindow]);
+
+  const selectMarket = useCallback(
+    (m: Market) => {
+      setMenuOpen(false);
+      if (m.key === market.key) return;
+      setLive(null);
+      setOpenPx(null);
+      lastMarket.current = null;
+      setMarket(m);
+      const url = new URL(window.location.href);
+      if (m.key === DEFAULT_MARKET.key) url.searchParams.delete("m");
+      else url.searchParams.set("m", m.key);
+      window.history.replaceState(null, "", url);
+      log(`Switched to ${m.asset}, ${intervalWords(m.intervalSec)}.`);
+    },
+    [log, market.key],
+  );
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (!(e.target instanceof Element) || !e.target.closest(".pit-mkt")) setMenuOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [menuOpen]);
 
   // The book comes from the chain every two seconds. The indexer and the
   // websocket tail can run minutes behind; the pool never does.
@@ -390,6 +428,38 @@ export function HouseDesk() {
         <Link className="pit-mark" href="/">
           <HouseLogo size={18} />
         </Link>
+        <div className={`pit-mkt${menuOpen ? " is-open" : ""}`}>
+          <button
+            type="button"
+            className="pit-mkt-btn"
+            aria-haspopup="listbox"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((o) => !o)}
+          >
+            {market.asset} <span>{intervalWords(market.intervalSec)}</span>
+          </button>
+          {menuOpen ? (
+            <div className="pit-menu" role="listbox">
+              {MARKET_ASSETS.map((asset) => (
+                <div className="pit-menu-col" key={asset}>
+                  <span className="pit-k">{asset}</span>
+                  {MARKETS.filter((m) => m.asset === asset).map((m) => (
+                    <button
+                      key={m.key}
+                      type="button"
+                      role="option"
+                      aria-selected={m.key === market.key}
+                      className={m.key === market.key ? "is-on" : ""}
+                      onClick={() => selectMarket(m)}
+                    >
+                      {intervalWords(m.intervalSec)}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <div className="pit-wallet">
           {address ? (
             <>
@@ -484,7 +554,7 @@ export function HouseDesk() {
         <div className="row-q">
           <h2>
             {live && openPx != null
-              ? `Will BTC be above ${openPx.toLocaleString("en-US", { maximumFractionDigits: 0 })} at ${stampShort(live.expiry)}?`
+              ? `Will ${live.asset} be above ${openPx.toLocaleString("en-US", { maximumFractionDigits: 0 })} at ${stampShort(live.expiry)}?`
               : "Waiting for the next window"}
           </h2>
           <p className={`pit-hint ${hint.warn ? "warn" : ""}`}>{hint.text}</p>
@@ -644,7 +714,8 @@ function Num({ v, dp }: { v: number; dp: number }) {
 
 function clock(sec: number) {
   const s = Math.max(0, Math.floor(sec));
-  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  const mmss = `${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${mmss}` : mmss;
 }
 
 function stampShort(unix: number) {
@@ -667,6 +738,7 @@ function short(addr: string) {
 }
 
 function fmtInterval(sec: number) {
+  if (sec % 86400 === 0) return `${sec / 86400}d`;
   if (sec % 3600 === 0) return `${sec / 3600}h`;
   if (sec % 60 === 0) return `${sec / 60}m`;
   return `${sec}s`;
