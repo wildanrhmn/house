@@ -7,6 +7,7 @@ import {
   useWatchMarket,
   useWatchPrice,
 } from "@somnia-chain/markets-sdk/react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, useConnect, useDisconnect, useWalletClient } from "wagmi";
 import { ClockRing } from "./ClockRing";
@@ -161,7 +162,9 @@ export function HouseDesk() {
   return (
     <main className="pit">
       <header className="mast">
-        <p className="wordmark">HOUSE</p>
+        <p className="wordmark">
+          <Link href="/">HOUSE</Link>
+        </p>
         <p className="lede">Be the book. Quote both sides. Keep the spread.</p>
         <div className="wallet">
           {isConnected && address ? (

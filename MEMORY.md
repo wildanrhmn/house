@@ -62,7 +62,8 @@ Node quote process (PRIVATE_KEY)
 
 ## Files
 
-- `web/`: Next.js desk on :3000
+- `/` cinematic landing (hero, what, how, judges). `/desk` is the quoting tool. GSAP + ScrollTrigger. Do not copy house-protocol (lime mascot / vault gambling). Keep night pit.
+- `web/`: Next.js app on :3000
 - `quote/src/index.ts`: Node PostOnly loop (loads PRIVATE_KEY from root `.env`, never prints it)
 - `web/src/lib/{config,exchange,discover,quoting,house}.ts`: shared venue, math, writes
 - `MEMORY.md`: this file

@@ -1,5 +1,5 @@
-import { HouseDesk } from "@/components/HouseDesk";
+import { Landing } from "@/components/Landing";
 
 export default function Page() {
-  return <HouseDesk />;
+  return <Landing />;
 }

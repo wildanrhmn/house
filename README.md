@@ -15,7 +15,7 @@ npm install
 npm run dev
 ```
 
-UI: [http://localhost:3000](http://localhost:3000). Connect a Shannon wallet, then Quote both sides once per window. Flatten sells leftover outcomes. Redeem settled pulls payouts after resolve.
+Landing: [http://localhost:3000](http://localhost:3000). Desk: [http://localhost:3000/desk](http://localhost:3000/desk). Connect a Shannon wallet, then Quote both sides once per window. Flatten sells leftover outcomes. Redeem settled pulls payouts after resolve.
 
 Node quoter (same key, requotes about every 20s):
 
