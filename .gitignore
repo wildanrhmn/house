@@ -7,4 +7,5 @@ out/
 cache/
 reference/
 spike/
+.next/
 *.log

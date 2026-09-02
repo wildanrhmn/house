@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  transpilePackages: ["@somnia-chain/markets-sdk"],
 };
 
 export default nextConfig;
