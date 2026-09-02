@@ -68,8 +68,6 @@ export function HeroBook() {
           kept.textContent = `+${(minted * 0.04).toFixed(2)}`;
         };
 
-        // The window clock rolls every 15 minutes and a fresh window starts
-        // the counters again.
         let secs = 14 * 60 + 59 - Math.floor(Math.random() * 240);
         const tick = () => {
           if (secs <= 0) {
@@ -94,8 +92,6 @@ export function HeroBook() {
         gsap.set(fills[1], { xPercent: 100, yPercent: -50, scale: 0.6, autoAlpha: 0 });
         gsap.set(set, { xPercent: -50, yPercent: -50, scale: 0.8, autoAlpha: 0 });
 
-        // A taker walks in from the empty side of the book, hits the resting
-        // quote, the bar drains and a fill chip pops at the tip.
         const hit = (tl: gsap.core.Timeline, row: HTMLElement, at: number) => {
           const taker = row.querySelector<HTMLElement>(".taker")!;
           const bar = row.querySelector<HTMLElement>(".bar")!;

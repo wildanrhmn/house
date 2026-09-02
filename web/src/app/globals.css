@@ -90,8 +90,7 @@ input:focus-visible {
   padding-right: 0;
 }
 
-/* The desk. No boxes: a night pit lit from the middle. The window on the
-   left, the book in the middle, the house on the right, the tape on the floor. */
+/* Desk */
 
 .pit {
   position: relative;
@@ -1246,14 +1245,6 @@ input:focus-visible {
   font-size: 0.8rem;
   letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
-}
-
-.land-tape-up strong {
-  color: #8f5a24;
-}
-
-.land-tape-down strong {
-  color: #24465c;
 }
 
 @keyframes land-marquee {

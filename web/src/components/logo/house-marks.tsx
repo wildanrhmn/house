@@ -2,8 +2,6 @@ import type { SVGProps } from "react";
 
 export type MarkProps = SVGProps<SVGSVGElement> & { size?: number };
 
-// A, The Pair: one coin in two halves, YES and NO. A complete set is the whole
-// product, and it is already the chip that fires on the desk.
 export function MarkPair({ size = 24, ...rest }: MarkProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="currentColor" aria-hidden {...rest}>
@@ -14,8 +12,6 @@ export function MarkPair({ size = 24, ...rest }: MarkProps) {
   );
 }
 
-// B, Two Sides: an H built from a bid, an ask and the mid line between them.
-// The letter is the quote.
 export function MarkSides({ size = 24, ...rest }: MarkProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeLinecap="round" aria-hidden {...rest}>
@@ -26,7 +22,6 @@ export function MarkSides({ size = 24, ...rest }: MarkProps) {
   );
 }
 
-// C, The Roof: a house gable with the mid bar inside. Literal and friendly.
 export function MarkRoof({ size = 24, ...rest }: MarkProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeLinejoin="round" strokeLinecap="round" aria-hidden {...rest}>
@@ -37,7 +32,6 @@ export function MarkRoof({ size = 24, ...rest }: MarkProps) {
   );
 }
 
-// D, The Window: the desk's clock ring, three quarters run, a dot for now.
 export function MarkWindow({ size = 24, ...rest }: MarkProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden {...rest}>

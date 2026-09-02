@@ -1,59 +1,219 @@
+<div align="center">
+
 # HOUSE
 
-Event Contracts let two buyers mint a complete set with no seller. HOUSE lets a normal wallet be that book.
+**Be the book. Quote both sides of a DreamDEX window from a normal wallet.**
 
-Quote both sides of a DreamDEX binary on Somnia Shannon: rest `BUY_YES` below mid and `BUY_NO` so the implied Up ask sits above mid. Opposite takers mint the pair. You keep the spread. No inventory to start.
+Post two prices, wait for takers, keep the gap. No side to pick, no tokens to start, no vault in between.
 
-Shannon prototype for the Somnia x DreamDEX Event Contracts hackathon.
+[![Somnia Shannon](https://img.shields.io/badge/Somnia-Shannon%2050312-e8a060)](https://docs.somnia.network/)
+[![DreamDEX Event Contracts](https://img.shields.io/badge/DreamDEX-Event%20Contracts-6fa0bf)](https://dorahacks.io/hackathon/event-contracts/detail)
+[![markets-sdk 0.29.0](https://img.shields.io/badge/markets--sdk-0.29.0-efe6d6)](https://www.npmjs.com/package/@somnia-chain/markets-sdk)
+[![Proof](https://img.shields.io/badge/proof-merge%20tx%20on%20Shannon-16132a)](https://shannon-explorer.somnia.network/tx/0xed699ecef467211225f8c333588ac16aef09424809b080bd62665b018c97c4a1)
 
-## Run
+</div>
 
-Root `.env` needs `PRIVATE_KEY` for the Node quoter and `TAKER_KEY` for the demo taker. Both wallets need STT for gas: the SDK reserves a 0.6 STT envelope per write. Do not commit the file.
+---
 
-```bash
-npm install
-npm run dev
+DreamDEX Event Contracts are fifteen minute binaries on BTC and ETH, settled on Somnia. Every product built on them so far is a taker: pick Up or Down, hope. HOUSE is the other seat. It rests a buy on each side of the book at once, one tick better than the crowd. When someone crosses either price the pool mints a fresh YES and NO pair with no seller involved, and after both cross you hold a complete pair that is worth exactly 1.00 whatever BTC does. You paid less than 1.00 for it. Cash out hands the pair back to the pool for the full 1.00 and the difference is yours.
+
+## The problem
+
+DreamDEX has thin books. Its one unusual rule, that two opposite buyers can cross without a seller because the pool mints the pair, means a market maker on these windows needs no inventory at all. Nobody had put that seat in front of a person with a wallet. The only way to be the book was to run a bot from a kit, read the SDK, and think in ticks.
+
+HOUSE turns it into one button and a wallet signature. The quotes are real orders in DreamDEX's own book. The matching, the minting and the settlement are DreamDEX's. HOUSE holds nothing of yours.
+
+## What you get
+
+| On the desk | What it does |
+|---|---|
+| **Quote both sides** | Rests a buy for UP and a buy for DOWN, one tick inside the market, sized as you set. Both orders are simulated against the pool before anything is signed, so a quote that would cross is re-planned instead of sent. |
+| **Cash out** | Cancels resting quotes, hands every YES and NO pair back to the pool for 1.00 each, sells any unmatched leftover at the market. |
+| **Collect payouts** | Redeems winning tokens from windows that already settled. |
+| **Take down** | Cancels your resting prices, in one batch transaction. |
+| **`/desk?watch=0x…`** | Follows any wallet read-only. How to watch the Node quoter, or show a judge. |
+
+The same engine runs unattended from Node as `npm run quote`, and `npm run demo` plays the whole loop with a second wallet as the taker.
+
+## The pair
+
+```mermaid
+flowchart LR
+    Y["Your wallet"] -->|"rest buy UP at 0.464"| P["DreamDEX pool<br/>BTC 15m book"]
+    Y -->|"rest buy DOWN at 0.508"| P
+    A["Person A<br/>thinks Up"] -->|"buys UP, crosses your DOWN"| P
+    B["Person B<br/>thinks Down"] -->|"buys DOWN, crosses your UP"| P
+    P -->|"mints each pair, no seller"| H["You hold<br/>1 YES + 1 NO"]
+    H -->|"cash out, burn the pair"| C["1.00 back<br/>0.028 kept"]
+
+    classDef you fill:#1a1208,stroke:#c9843a,color:#f3eadc
+    classDef pool fill:#16132a,stroke:#efe6d6,color:#f3eadc
+    classDef other fill:#24465c,stroke:#6fa0bf,color:#e8f2f6
+    class Y,H,C you
+    class P pool
+    class A,B other
 ```
 
-Landing: [http://localhost:3000](http://localhost:3000). Desk: [http://localhost:3000/desk](http://localhost:3000/desk). Connect a Shannon wallet, then Quote both sides once per window. Both orders are simulated against the pool before anything is signed, so a quote that would cross is re-planned instead of sent, and the wallet asks at most three times: one batch cancel of resting quotes, then one signature per side. The desk shows the bet as a question, an UP card and a DOWN card with what you pay against what the crowd pays, and the sum: what a pair costs you, that a pair always pays 1.00, and what you keep. Cash out (Flatten) hands pairs back for 1.00 each and sells any unmatched leftover. Collect payouts (Redeem) pulls winnings from windows that already settled. `/desk?watch=0x...` follows any wallet read-only, which is how to watch the Node quoter work.
+- Prices are probabilities. UP at 0.464 and DOWN at 0.508 add to 0.972, and a pair pays exactly 1.00.
+- Both orders are PostOnly with a mandatory expiry, so they rest, never take, and die on their own.
+- If only one side fills you hold a plain position. The desk shows it as unmatched and Cash out sells it.
 
-Node quoter (PRIVATE_KEY, requotes about every 20s). It sits one tick inside a wider market and never thinner than two ticks; `HOUSE_HALF_SPREAD` caps the half spread and `HOUSE_SIZE` sets contracts per side:
+## System
 
-```bash
-npm run quote
+```mermaid
+flowchart TB
+    subgraph WEB["web, Next.js on :3000"]
+        direction LR
+        L["Landing"]
+        D["Desk"]
+    end
+
+    subgraph LIB["web/src/lib, shared engine"]
+        direction LR
+        DISC["discover"]
+        PLAN["plan + quote"]
+        FLAT["merge + flatten"]
+    end
+
+    subgraph NODE["quote, Node scripts"]
+        direction LR
+        Q["quote"]
+        T["take"]
+        DEMO["demo"]
+    end
+
+    subgraph CHAIN["Somnia Shannon"]
+        direction LR
+        POOL["BinaryPool<br/>book, matching, minting"]
+        OT["Outcome tokens"]
+        ORA["Oracle + settlement"]
+        IDX["Indexer"]
+    end
+
+    D --> PLAN
+    D --> FLAT
+    Q --> PLAN
+    T --> PLAN
+    DEMO --> PLAN
+    DEMO --> FLAT
+    DISC --> IDX
+    PLAN -->|"placeBinaryOrder, chain-head reads"| POOL
+    FLAT -->|"burnSet, redeem"| POOL
+    POOL --> OT
+    POOL --> ORA
+
+    classDef web fill:#1a1208,stroke:#c9843a,color:#f3eadc
+    classDef lib fill:#16132a,stroke:#efe6d6,color:#f3eadc
+    classDef chain fill:#24465c,stroke:#6fa0bf,color:#e8f2f6
+    class L,D web
+    class DISC,PLAN,FLAT,Q,T,DEMO lib
+    class POOL,OT,ORA,IDX chain
 ```
 
-Demo taker (TAKER_KEY). Lifts the resting Up ask with a BUY_YES and hits the bid with a BUY_NO, both immediate or cancel, so each cross mints a complete set into the maker. `--dry` prints the plan without writing, `--faucet` mints test collateral first:
+Reads that must be current come from the chain, not the indexer: the book, your resting orders, your balances. The indexer only finds the live window.
 
-```bash
-npm run take -- --dry
-npm run take -- --faucet
-npm run take
+## End-to-end
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as You
+    participant W as Desk
+    participant P as Pool
+    participant A as Person A
+    participant B as Person B
+    participant O as Oracle
+
+    W->>P: find the live window, read the book at chain head
+    U->>W: Quote both sides
+    W->>P: simulate both orders, re-plan if either would cross
+    U->>P: rest buy UP, rest buy DOWN (two signatures)
+    B->>P: buys DOWN, crossing your UP bid
+    P-->>U: pool mints, you hold 5 YES, B holds 5 NO
+    A->>P: buys UP, crossing your DOWN
+    P-->>U: pool mints, you hold 5 YES + 5 NO
+    U->>W: Cash out
+    U->>P: burnSet(5)
+    P-->>U: 5.00 back, 0.14 kept
+    Note over O,P: window closes, oracle resolves, losing side pays 0
+    U->>W: Collect payouts, for any side you kept to the close
 ```
 
-The loop: quote both sides, let the taker cross both, watch Sets held rise on the desk, then Flatten. Flatten cancels, merges every balanced YES and NO pair back to collateral, and sells any leftover. The merge is where the spread is realized.
+## Proof on Shannon
 
-One command runs the whole loop from Node with both keys, rounds until the maker holds a complete set, then flattens:
+`npm run demo` on 2 Sep 2026, BTC 15m market `0x…11199`, five contracts a side. HOUSE rested UP at 0.036 and DOWN at 0.945, so a pair cost 0.981.
 
-```bash
-npm run demo
+| Step | Transaction |
+|---|---|
+| Taker buys UP against HOUSE's DOWN, pool mints | [`0x76f7…b77a2`](https://shannon-explorer.somnia.network/tx/0x76f7625ce7fa6c1264fbbe752d1d2a6a5a064cc871706eb56028fa63c2bb77a2) |
+| Taker buys DOWN against HOUSE's UP, pool mints again | [`0xcb58…888db`](https://shannon-explorer.somnia.network/tx/0xcb589ed80a98999a8a82e51f102475df97d8e5731f71df8d1e8d51f87e1888db) |
+| Five pairs merged back to collateral | [`0xed69…97c4a1`](https://shannon-explorer.somnia.network/tx/0xed699ecef467211225f8c333588ac16aef09424809b080bd62665b018c97c4a1) |
+| Collateral change | +0.095 tUSDC, five times the 0.019 spread |
+
+Earlier that day a third party bot crossed a resting HOUSE quote on its own, [`0x1429…41af0`](https://shannon-explorer.somnia.network/tx/0x14295dd86137d448411d864635743a59796df5f284e595879f70109268941af0), which the indexer records as MINT_A_PAIR with HOUSE as maker. Nobody had to be told the book was there.
+
+## Repository layout
+
 ```
-
-## Proof on Shannon, 2 Sep 2026
-
-`npm run demo` on BTC 15m market `0x...11199`. HOUSE rested BUY_YES at 0.036 and BUY_NO at an implied Up ask of 0.055, 5 contracts a side. The taker lifted the ask in `0x76f7625ce7fa6c1264fbbe752d1d2a6a5a064cc871706eb56028fa63c2bb77a2` and hit the bid in `0xcb589ed80a98999a8a82e51f102475df97d8e5731f71df8d1e8d51f87e1888db`. Each cross had no seller, so the pool minted the pair. HOUSE held 5 complete sets, merged them back to collateral in `0xed699ecef467211225f8c333588ac16aef09424809b080bd62665b018c97c4a1`, and its collateral rose by 0.095 tUSDC, five times the 0.019 spread.
-
-Earlier the same day a third-party bot lifted a resting HOUSE quote on its own, `0x14295dd86137d448411d864635743a59796df5f284e595879f70109268941af0`, which the indexer records as MINT_A_PAIR with HOUSE as maker.
-
-## Deploy
-
-The web app deploys to Vercel from the `web` folder with no build settings beyond the defaults. Set `NEXT_PUBLIC_SITE_URL` to the public origin so link previews carry the right URL. Logo options live at `/demo/logo`, with a 1024 by 1024 export for the submission form.
+house/
+├─ web/                 Next.js 15 app
+│  └─ src/
+│     ├─ app/           / landing, /desk, /demo/logo, icon
+│     ├─ components/    Landing, HeroBook, HowItWorks, Floor, HouseDesk, logo marks
+│     └─ lib/           config, discover, quoting math, house (plan, quote, merge, flatten, redeem)
+├─ quote/
+│  └─ src/              quote (maker loop), take (demo taker), flatten, demo (whole loop), env
+├─ SDK-FEEDBACK.md      what we hit in markets-sdk 0.29.0 and what we would change
+└─ .env.example         PRIVATE_KEY for the maker, TAKER_KEY for the demo taker
+```
 
 ## Stack
 
-- Next.js desk on port 3000 (indexer CORS is allowed for that origin)
-- `@somnia-chain/markets-sdk` 0.29.0
-- DreamDEX venue only. Prefer BTC 15m. Writes gated on on-chain status Trading.
-- PostOnly. `expireTimestampNs` is required. `BUY_NO` prices are in YES terms.
+| Layer | What |
+|---|---|
+| **Web** | Next.js 15, React 19, wagmi + viem, GSAP, Lenis |
+| **Engine** | `@somnia-chain/markets-sdk` 0.29.0, unified chain-head reads and PostOnly writes |
+| **Venue** | DreamDEX BinaryPool, BTC 15m, venue `0x6797…a28c` |
+| **Chain** | Somnia Shannon, chainId 50312, tUSDC collateral |
+| **Scripts** | Node 22, tsx |
 
-No Solidity. No vault. One-shot wallet quotes, not a MetaMask requote loop.
+No Solidity, no vault, no custody. Every write is a DreamDEX order or settlement call signed by your wallet.
+
+## On Shannon
+
+| Contract | Address |
+|---|---|
+| BinaryMarketsModule | `0x3ecC694Cef705358864a646142ac17A90E29e388` |
+| BinarySettlement | `0xbF4a49e0Dfd092e5FBE8E5761064C49533e6Ed23` |
+| OutcomeToken6909 | `0xB52c5934113Af5c0Bb20eb3C72290C8215f755b9` |
+| OracleHub | `0xe40db387cC98601Dd11bd634fF2f3AD5686dE32b` |
+| tUSDC collateral | `0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E` |
+| DreamDEX venue id | `0x679795a0195a1b76cdebb7c51d74e058aee92919b8c3389af86ef24535e8a28c` |
+
+HOUSE deploys nothing. These are DreamDEX's contracts, reached through the SDK.
+
+What the SDK got right and what cost us time is in [SDK-FEEDBACK.md](SDK-FEEDBACK.md).
+
+## Getting started
+
+Root `.env` holds `PRIVATE_KEY` for the maker scripts and `TAKER_KEY` for the demo taker. Both wallets need STT for gas, since the SDK reserves a 0.6 STT envelope per write, and tUSDC, which `npm run take -- --faucet` mints.
+
+```bash
+npm install
+npm run dev            # landing on :3000, desk on :3000/desk
+```
+
+| Command | Does |
+|---|---|
+| `npm run quote` | Maker loop. Requotes about every 20s, one tick inside the market. `HOUSE_HALF_SPREAD` and `HOUSE_SIZE` tune it. `--once` places one quote and exits. |
+| `npm run take` | Demo taker. Crosses both resting quotes. `--dry` plans only, `--faucet` mints tUSDC first, `--faucet-only` stops there. |
+| `npm run flatten` | Maker cash out from Node. `--dry` prints inventory and collateral. |
+| `npm run demo` | The whole loop in one process. Rounds until the maker holds a pair, then flattens. `--keep` leaves the pair in the wallet so the desk can show it. |
+
+Deploys to Vercel from `web` with default settings. Set `NEXT_PUBLIC_SITE_URL` to the public origin. Logo options and the 1024 submission asset are at `/demo/logo`.
+
+---
+
+<div align="center">
+<sub>HOUSE, a wallet that is the book.</sub>
+</div>

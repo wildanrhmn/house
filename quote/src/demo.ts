@@ -89,7 +89,6 @@ async function main() {
       skipped: q.skipped,
     });
 
-    // What is actually resting at chain head, then what sits in front of it.
     const r = await restingQuotes(maker, pool, M);
     const book = await maker.client.getBinaryOrderBook(pool, { depth: 12, decimals: d });
     const before = await readInventory(maker, live);

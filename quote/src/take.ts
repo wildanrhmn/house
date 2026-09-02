@@ -7,13 +7,10 @@ import { restingQuotes } from "../../web/src/lib/house.ts";
 import { expireNs, snapLot, snapTick } from "../../web/src/lib/quoting.ts";
 import { envNumber, keyFromEnv, short } from "./env.ts";
 
-// The second wallet in the demo. It lifts HOUSE's implied Up ask with a BUY_YES
-// and hits HOUSE's bid with a BUY_NO, both immediate or cancel. Each cross has
-// no seller, so the pool mints a complete set and HOUSE ends up holding it.
-//
-// Pool prices are always YES terms, so a BUY_NO is more aggressive at a LOWER
-// price. Both legs cross by TAKE_MARGIN so a moving book does not leave a leg
-// unfilled; the pool fills at the resting price.
+// The demo taker. It crosses both HOUSE quotes with immediate or cancel orders.
+// Each cross has no seller, so the pool mints a complete set into HOUSE.
+// Pool prices are YES terms, so a BUY_NO is more aggressive at a LOWER price.
+// Both legs cross by TAKE_MARGIN so a moving book does not leave one unfilled.
 
 const DRY = process.argv.includes("--dry");
 const FAUCET = process.argv.includes("--faucet");
@@ -59,7 +56,6 @@ async function main() {
   const pool = live.pool as Address;
   console.log("window", live.marketId, "expires in", Math.round(live.expiry - Date.now() / 1000), "s");
 
-  // Prefer HOUSE's own resting orders. Fall back to the top of the book.
   let bidPx: bigint | null = null;
   let bidQty = 0n;
   let askPx: bigint | null = null;

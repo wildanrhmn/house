@@ -93,8 +93,6 @@ export function HouseDesk() {
     return () => clearInterval(id);
   }, []);
 
-  // The tab title follows the window, so the desk reads at a glance from
-  // another tab: "12:41 BTC 15m, HOUSE".
   const secondsLeft = Math.max(0, Math.floor(remaining));
   useEffect(() => {
     if (!live) {
@@ -166,7 +164,6 @@ export function HouseDesk() {
         const b = await getReadExchange().client.getBinaryOrderBook(pool, { depth: 3, decimals: dec });
         if (!stop) setBook(b);
       } catch {
-        // keep the last good book
       }
     };
     void read();
@@ -191,8 +188,6 @@ export function HouseDesk() {
     });
   }, [livePx, live, now]);
 
-  // Everything about this wallet, read at chain head: outcome balances,
-  // resting quotes, collateral. Also where fills and minted sets are noticed.
   const refreshMine = useCallback(async () => {
     if (!live || !address) {
       setInv({ up: 0, down: 0 });
@@ -626,7 +621,6 @@ export function HouseDesk() {
   );
 }
 
-// A number that eases to its new value instead of jumping.
 function Num({ v, dp }: { v: number; dp: number }) {
   const ref = useRef<HTMLSpanElement>(null);
   const cur = useRef(v);
