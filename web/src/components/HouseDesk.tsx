@@ -1,15 +1,7 @@
 "use client";
 
-import { toHuman } from "@somnia-chain/markets-sdk";
-import {
-  useLiveBinaryOrderBookByMarket,
-  useLiveFills,
-  useLivePrice,
-  useLivePriceTicks,
-  useWatchMarket,
-  useWatchPrice,
-  useWatchUser,
-} from "@somnia-chain/markets-sdk/react";
+import { toHuman, type BinaryOrderBook } from "@somnia-chain/markets-sdk";
+import { useLivePrice, useWatchPrice } from "@somnia-chain/markets-sdk/react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import Link from "next/link";
@@ -29,30 +21,31 @@ import { createSignedExchange, getReadExchange } from "@/lib/exchange";
 import {
   cancelOwn,
   flattenInventory,
-  planQuotes,
   quoteWithRetry,
   redeemSettled,
   restingQuotes,
-  type QuotePlan,
   type Resting,
 } from "@/lib/house";
-import { fairYes } from "@/lib/quoting";
+import { clampProb, fairYes } from "@/lib/quoting";
 
 gsap.registerPlugin(useGSAP);
 
 type Tone = "up" | "down" | "warn";
 type Ev = { id: number; t: number; text: string; tone?: Tone };
-type Level = { price: number; qty: number; mine?: Resting; ghost?: boolean };
+type Level = { key: string; price: number; qty: number; mine?: Resting; ghost?: boolean; empty?: boolean };
+
+const SLOTS = 4;
 
 const pc = createPublicClient({ chain: CHAIN, transport: http(HTTP_RPC_URL) });
-const EMPTY_BOOK = { yesBids: [], yesAsks: [], noBids: [], noAsks: [] };
+const EMPTY_BOOK: BinaryOrderBook = { yesBids: [], yesAsks: [], noBids: [], noAsks: [] };
 
 export function HouseDesk() {
   const root = useRef<HTMLElement>(null);
   const [live, setLive] = useState<HouseWindow | null>(null);
   const [openPx, setOpenPx] = useState<number | null>(null);
-  const [plan, setPlan] = useState<QuotePlan | null>(null);
   const [inv, setInv] = useState({ up: 0, down: 0 });
+  const [book, setBook] = useState<BinaryOrderBook>(EMPTY_BOOK);
+  const [series, setSeries] = useState<Array<{ t: number; p: number }>>([]);
   const [resting, setResting] = useState<Resting[]>([]);
   const [collateral, setCollateral] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -67,6 +60,8 @@ export function HouseDesk() {
   const evId = useRef(0);
   const lastSets = useRef(-1);
   const lastMarket = useRef<string | null>(null);
+  const prevInv = useRef<{ up: number; down: number } | null>(null);
+  const prevResting = useRef<Resting[]>([]);
 
   const { address: connected, isConnected } = useAccount();
   const { connect, connectors, error: connectError } = useConnect();
@@ -83,15 +78,49 @@ export function HouseDesk() {
   const address = connected ?? watch;
 
   useWatchPrice(live?.asset);
-  useWatchMarket(live?.pool);
-  useWatchUser(address);
   const livePx = useLivePrice(live?.asset);
-  const ticks = useLivePriceTicks(live?.asset, 120);
-  const liveBook = useLiveBinaryOrderBookByMarket(live?.marketId, 8);
-  const book = liveBook ?? EMPTY_BOOK;
-  const fills = useLiveFills(live?.pool, 20);
 
   const d = live?.quoteDecimals ?? 6;
+
+  // The book comes from the chain every two seconds. The indexer and the
+  // websocket tail can run minutes behind; the pool never does.
+  useEffect(() => {
+    if (!live) {
+      setBook(EMPTY_BOOK);
+      return;
+    }
+    let stop = false;
+    const pool = live.pool as Address;
+    const dec = live.quoteDecimals;
+    const read = async () => {
+      try {
+        const b = await getReadExchange().client.getBinaryOrderBook(pool, { depth: 6, decimals: dec });
+        if (!stop) setBook(b);
+      } catch {
+        // keep the last good book
+      }
+    };
+    void read();
+    const id = setInterval(() => void read(), 2_000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [live]);
+
+  // The price line is sampled from the live index as it arrives, so it never
+  // depends on indexed history. It keeps the current window only.
+  useEffect(() => {
+    const p = livePx?.price;
+    if (!p || !live) return;
+    const t = Date.now() / 1000;
+    const from = live.expiry - live.intervalSec;
+    setSeries((s) => {
+      const last = s[s.length - 1];
+      if (last && Math.abs(last.p - p) < 1e-9 && t - last.t < 2) return s;
+      return [...s.filter((x) => x.t >= from), { t, p }].slice(-240);
+    });
+  }, [livePx, live, now]);
   const toN = useCallback((v: bigint | string) => Number(toHuman(v, d)), [d]);
   const remaining = live ? live.expiry - now : 0;
   const headroom = live ? minLeftSec(live.intervalSec) : 0;
@@ -119,7 +148,6 @@ export function HouseDesk() {
           ease: "power3.out",
           delay: 0.15,
         });
-        gsap.from(".pit-tape", { autoAlpha: 0, duration: 0.8, delay: 0.7 });
       });
       return () => mm.revert();
     },
@@ -138,16 +166,13 @@ export function HouseDesk() {
         lastMarket.current = next.marketId;
         const open = await openingPrice(exchange, next.marketId);
         setOpenPx(open);
-        const p = await planQuotes(exchange, next, spread, size);
-        setPlan(p);
       } else {
         setOpenPx(null);
-        setPlan(null);
       }
     } catch (err) {
       log(err instanceof Error ? err.message : String(err), "warn");
     }
-  }, [size, spread, log]);
+  }, [log]);
 
   useEffect(() => {
     void refreshWindow();
@@ -177,6 +202,20 @@ export function HouseDesk() {
       ]);
       const u = toN(up);
       const dn = toN(down);
+      // A rise in what you hold is a fill against one of your resting quotes.
+      const prev = prevInv.current;
+      if (prev) {
+        const wasBid = prevResting.current.find((o) => o.isBid);
+        const wasAsk = prevResting.current.find((o) => !o.isBid);
+        if (u > prev.up + 1e-9) {
+          log(`Your bid filled: ${fmt(u - prev.up)} YES${wasBid ? ` at ${toN(wasBid.price).toFixed(3)}` : ""}.`, "up");
+        }
+        if (dn > prev.down + 1e-9) {
+          log(`Your ask filled: ${fmt(dn - prev.down)} NO${wasAsk ? ` at ${toN(wasAsk.price).toFixed(3)}` : ""}.`, "down");
+        }
+      }
+      prevInv.current = { up: u, down: dn };
+      prevResting.current = r.orders;
       setInv({ up: u, down: dn });
       setResting(r.orders);
       setCollateral(Number(toHuman(bal, 6)));
@@ -210,59 +249,63 @@ export function HouseDesk() {
   const mineAsk = resting.find((o) => !o.isBid);
   const bothResting = !!mineBid && !!mineAsk;
 
-  const displayPlan = useMemo(() => {
-    if (plan) return plan;
+  // Where the next quote would sit, from the live book: one tick inside a
+  // wider market, never thinner than two ticks, never wider than half spread.
+  const next = useMemo(() => {
+    const tick = 0.001;
     const fair = fairYes(yesBid, yesAsk);
-    return { bidYes: fair - spread, askYes: fair + spread, size, fair };
-  }, [plan, yesBid, yesAsk, spread, size]);
+    let half = spread;
+    if (yesBid !== undefined && yesAsk !== undefined) {
+      half = Math.max(2 * tick, Math.min(spread, (yesAsk - yesBid) / 2 - tick));
+    }
+    const r3 = (n: number) => Math.round(n * 1000) / 1000;
+    return { bid: r3(clampProb(fair - half)), ask: r3(clampProb(fair + half)), fair };
+  }, [yesBid, yesAsk, spread]);
 
   const perSet = useMemo(() => {
     if (mineBid && mineAsk) return Math.max(0, toN(mineAsk.price) - toN(mineBid.price));
-    return Math.max(0, displayPlan.askYes - displayPlan.bidYes);
-  }, [mineBid, mineAsk, displayPlan, toN]);
+    return Math.max(0, next.ask - next.bid);
+  }, [mineBid, mineAsk, next, toN]);
   const sets = Math.min(inv.up, inv.down);
   const unmatched = Math.abs(inv.up - inv.down);
   const unmatchedSide = inv.up > inv.down ? "YES" : "NO";
 
+  // A fixed number of slots a side, keyed by rank from mid, so the ladder
+  // never jumps: a level that leaves empties the far slot and the rest shift
+  // their contents in place. Your row and the next row keep their own keys.
   const ladder = useMemo(() => {
-    const key = (p: number) => Math.round(p * 1000);
-    const asks: Level[] = book.yesAsks.slice(0, 5).map((l) => ({ price: toN(l.price), qty: toN(l.quantity) }));
-    const bids: Level[] = book.yesBids.slice(0, 5).map((l) => ({ price: toN(l.price), qty: toN(l.quantity) }));
-    const place = (rows: Level[], row: Level, asc: boolean) => {
-      const hit = rows.find((r) => key(r.price) === key(row.price));
-      if (hit) {
-        hit.mine = row.mine;
-        hit.ghost = row.ghost;
-        return;
-      }
-      rows.push(row);
-      rows.sort((a, b) => (asc ? a.price - b.price : b.price - a.price));
+    const showNext = !!live && phase === "trading";
+    const side = (levels: typeof book.yesAsks, prefix: string, mine: Resting | undefined, nextPx: number, farFirst: boolean) => {
+      const filled: Level[] = levels
+        .slice(0, SLOTS)
+        .map((l, i) => ({ key: `${prefix}${i}`, price: toN(l.price), qty: toN(l.quantity) }));
+      if (mine) filled.push({ key: `you-${prefix}`, price: toN(mine.price), qty: toN(mine.quantity), mine });
+      else if (showNext) filled.push({ key: `next-${prefix}`, price: nextPx, qty: size, ghost: true });
+      filled.sort((a, b) => b.price - a.price);
+      const empties: Level[] = [];
+      for (let i = levels.length; i < SLOTS; i++) empties.push({ key: `${prefix}${i}`, price: Number.NaN, qty: 0, empty: true });
+      return farFirst ? [...empties, ...filled] : [...filled, ...empties];
     };
-    const showGhosts = !!live && !!plan && phase === "trading";
-    if (mineAsk) place(asks, { price: toN(mineAsk.price), qty: toN(mineAsk.quantity), mine: mineAsk }, true);
-    else if (showGhosts) place(asks, { price: plan.askYes, qty: size, ghost: true }, true);
-    if (mineBid) place(bids, { price: toN(mineBid.price), qty: toN(mineBid.quantity), mine: mineBid }, false);
-    else if (showGhosts) place(bids, { price: plan.bidYes, qty: size, ghost: true }, false);
+    const asks = side(book.yesAsks, "a", mineAsk, next.ask, true);
+    const bids = side(book.yesBids, "b", mineBid, next.bid, false);
     const max = Math.max(1, ...asks.map((l) => l.qty), ...bids.map((l) => l.qty));
-    return { asks: asks.slice(0, 6).reverse(), bids: bids.slice(0, 6), max };
-  }, [book, mineAsk, mineBid, plan, live, phase, size, toN]);
+    return { asks, bids, max };
+  }, [book, mineAsk, mineBid, next, live, phase, size, toN]);
 
   const spark = useMemo(() => {
-    const pts = [...ticks].sort((a, b) => a.blockTimestamp - b.blockTimestamp).map((t) => t.price);
-    if (livePx?.price) pts.push(livePx.price);
-    const series = pts.slice(-120);
-    if (series.length < 2) return null;
-    const all = openPx != null ? [...series, openPx] : series;
+    const pts = series.map((x) => x.p);
+    if (pts.length < 2) return null;
+    const all = openPx != null ? [...pts, openPx] : pts;
     let lo = Math.min(...all);
     let hi = Math.max(...all);
     const pad = Math.max((hi - lo) * 0.2, hi * 0.0002);
     lo -= pad;
     hi += pad;
-    const x = (i: number) => (i / (series.length - 1)) * 300;
+    const x = (i: number) => (i / (pts.length - 1)) * 300;
     const y = (p: number) => 90 - ((p - lo) / (hi - lo)) * 90;
-    const path = series.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p).toFixed(1)}`).join(" ");
-    return { path, openY: openPx != null ? y(openPx) : null, lastY: y(series[series.length - 1]) };
-  }, [ticks, livePx, openPx]);
+    const path = pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p).toFixed(1)}`).join(" ");
+    return { path, openY: openPx != null ? y(openPx) : null, lastY: y(pts[pts.length - 1]) };
+  }, [series, openPx]);
 
   const run = async (label: "quote" | "flatten" | "redeem" | "pull") => {
     if (!walletClient) {
@@ -293,6 +336,7 @@ export function HouseDesk() {
         const merged = toN(out.merged);
         const sold = toN(out.soldUp + out.soldDown);
         if (merged > 0) setKept((k) => k + merged * perSet);
+        prevInv.current = null;
         const parts = [
           merged > 0 ? `Merged ${fmt(merged)} set${merged === 1 ? "" : "s"} back to collateral` : null,
           sold > 0 ? `sold ${fmt(sold)} leftover` : null,
@@ -338,7 +382,7 @@ export function HouseDesk() {
 
   const caption = bothResting
     ? `Resting ${fmt(toN(mineBid!.quantity))} a side at ${toN(mineBid!.price).toFixed(3)} and ${toN(mineAsk!.price).toFixed(3)}. Each fill pair keeps ${perSet.toFixed(3)}.`
-    : `Rests ${fmt(size)} a side at ${displayPlan.bidYes.toFixed(3)} and ${displayPlan.askYes.toFixed(3)}. Keeps ${perSet.toFixed(3)} a set.`;
+    : `Rests ${fmt(size)} a side at ${next.bid.toFixed(3)} and ${next.ask.toFixed(3)}. Keeps ${perSet.toFixed(3)} a set.`;
 
   return (
     <main ref={root} className="pit">
@@ -452,18 +496,18 @@ export function HouseDesk() {
             <span>{live ? `${live.asset} ${fmtInterval(live.intervalSec)}` : ""}</span>
           </header>
           <ol className={`ladder ${live ? "" : "is-arming"}`}>
-            {ladder.asks.map((l) => (
-              <Row key={`a${l.price}`} side="ask" level={l} max={ladder.max} />
+            {ladder.asks.map((l, i, arr) => (
+              <Row key={l.key} side="ask" level={l} max={ladder.max} best={i === arr.length - 1} />
             ))}
             <li className="lad-mid">
-              <span>{live ? `mid ${displayPlan.fair.toFixed(3)}` : "finding the next window"}</span>
+              <span>{live ? `mid ${next.fair.toFixed(3)}` : "finding the next window"}</span>
               <i />
               {live ? (
                 <span>{bothResting ? `your spread ${perSet.toFixed(3)}` : `next spread ${perSet.toFixed(3)}`}</span>
               ) : null}
             </li>
-            {ladder.bids.map((l) => (
-              <Row key={`b${l.price}`} side="bid" level={l} max={ladder.max} />
+            {ladder.bids.map((l, i) => (
+              <Row key={l.key} side="bid" level={l} max={ladder.max} best={i === 0} />
             ))}
           </ol>
           {chip ? (
@@ -536,34 +580,30 @@ export function HouseDesk() {
         </aside>
       </section>
 
-      <footer className="pit-tape" aria-label="Recent fills">
-        {fills.length === 0 ? (
-          <span className="pit-tape-empty">No fills on this window yet.</span>
-        ) : (
-          fills.map((f) => {
-            const mine =
-              !!address && [f.maker, f.taker].some((a) => a && a.toLowerCase() === address.toLowerCase());
-            const side = f.takerSide ?? (f.takerIsBid ? "BUY_YES" : "SELL_YES");
-            const yes = side.endsWith("YES");
-            return (
-              <span className={`pit-tape-row ${mine ? "mine" : ""}`} key={f.id}>
-                <i>{stampShort(Number(f.timestamp))}</i>
-                <span className={yes ? "yes" : "no"}>{side.replace("_", " ").toLowerCase()}</span>
-                <b>{fmt(toN(f.quantity))}</b>
-                <span>at {toN(f.fillPrice).toFixed(3)}</span>
-                {f.kind === "MINT_A_PAIR" ? <i>minted a set</i> : null}
-                {mine ? <i className="you">you</i> : null}
-              </span>
-            );
-          })
-        )}
-      </footer>
     </main>
   );
 }
 
-function Row({ side, level, max }: { side: "ask" | "bid"; level: Level; max: number }) {
-  const cls = ["lad-row", side, level.mine ? "you" : "", level.ghost ? "ghost" : ""].filter(Boolean).join(" ");
+function Row({ side, level, max, best }: { side: "ask" | "bid"; level: Level; max: number; best: boolean }) {
+  const cls = [
+    "lad-row",
+    side,
+    level.mine ? "you" : "",
+    level.ghost ? "ghost" : "",
+    level.empty ? "empty" : "",
+    best && !level.empty ? "best" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  if (level.empty) {
+    return (
+      <li className={cls}>
+        <span className="lad-px" />
+        <span className="lad-lane" />
+        <span className="lad-qty" />
+      </li>
+    );
+  }
   // Square root keeps a five lot quote visible next to a four hundred lot wall.
   const w = Math.max(0.06, Math.min(1, Math.sqrt(level.qty / max)));
   return (

@@ -201,7 +201,7 @@ input:focus-visible {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 360px;
   gap: 56px;
-  padding: 20px 44px 36px;
+  padding: 20px 44px 64px;
   align-items: center;
 }
 
@@ -404,7 +404,6 @@ input:focus-visible {
   font-size: 0.82rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  animation: lad-in 0.5s ease both;
 }
 
 @keyframes lad-in {
@@ -420,7 +419,12 @@ input:focus-visible {
 
 .lad-px {
   color: var(--chalk);
-  opacity: 0.55;
+  opacity: 0.45;
+  transition: opacity 0.3s;
+}
+
+.lad-row.best .lad-px {
+  opacity: 0.85;
 }
 
 .lad-row.you .lad-px {
@@ -430,13 +434,22 @@ input:focus-visible {
 
 .lad-lane {
   position: relative;
-  height: 100%;
+  height: 20px;
+}
+
+.lad-row.empty .lad-lane::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid rgb(239 230 214 / 0.05);
 }
 
 .lad-bar {
   position: absolute;
-  top: 8px;
-  bottom: 8px;
+  top: 0;
+  bottom: 0;
   width: calc(var(--w) * 100%);
   border-radius: 2px;
   background: rgb(239 230 214 / 0.07);
@@ -451,6 +464,11 @@ input:focus-visible {
   left: 0;
 }
 
+.lad-row.you .lad-bar,
+.lad-row.ghost .lad-bar {
+  min-width: 136px;
+}
+
 .lad-row.you.ask .lad-bar {
   background: linear-gradient(270deg, rgb(111 160 191 / 0.6), rgb(61 106 134 / 0.25));
   box-shadow: 0 0 18px rgb(111 160 191 / 0.25);
@@ -462,12 +480,9 @@ input:focus-visible {
 }
 
 .lad-row.ghost .lad-bar {
-  top: 50%;
-  bottom: auto;
-  width: 100%;
-  height: 0;
-  background: transparent;
-  border-top: 1px dashed rgb(239 230 214 / 0.3);
+  background: rgb(239 230 214 / 0.04);
+  outline: 1px dashed rgb(239 230 214 / 0.32);
+  outline-offset: -1px;
 }
 
 .lad-qty {
