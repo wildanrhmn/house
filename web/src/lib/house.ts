@@ -6,12 +6,46 @@ import {
   type PlaceOrderResult,
   type SomniaMarkets,
 } from "@somnia-chain/markets-sdk";
-import type { Address } from "viem";
-import { DREAMDEX_VENUE, DEFAULT_HALF_SPREAD, DEFAULT_QUOTE_SIZE, minLeftSec } from "./config";
+import { createPublicClient, erc20Abi, http, toFunctionSelector, type Address, type Hex } from "viem";
+import {
+  CHAIN,
+  DREAMDEX_VENUE,
+  DEFAULT_HALF_SPREAD,
+  DEFAULT_QUOTE_SIZE,
+  HTTP_RPC_URL,
+  TUSDC,
+  minLeftSec,
+} from "./config";
 import type { HouseWindow } from "./discover";
 import { expireNs, fairYes, snapLot, snapTick, twoSidedLevels } from "./quoting";
 
 type Onchain = Awaited<ReturnType<SomniaMarkets["client"]["getMarketOnchain"]>>;
+type Call = { to: Address; data: Hex; value: bigint };
+
+const sim = createPublicClient({ chain: CHAIN, transport: http(HTTP_RPC_URL) });
+const WOULD_CROSS = toFunctionSelector("PostOnlyWouldCross()");
+
+function revertData(err: unknown): string | undefined {
+  let e = err as { data?: unknown; cause?: unknown } | undefined;
+  for (let i = 0; i < 8 && e; i++) {
+    if (typeof e.data === "string" && e.data.startsWith("0x")) return e.data;
+    e = e.cause as typeof e;
+  }
+  return undefined;
+}
+
+// Ask the pool what it would do with this order before anyone signs it.
+async function simulate(from: Address, call: Call): Promise<"ok" | "cross" | string> {
+  try {
+    await sim.call({ account: from, to: call.to, data: call.data, value: call.value });
+    return "ok";
+  } catch (err) {
+    const data = revertData(err);
+    if (data && data.startsWith(WOULD_CROSS)) return "cross";
+    const text = err instanceof Error ? err.message.split("\n")[0] : String(err);
+    return text || "simulation failed";
+  }
+}
 
 function reverted(err: unknown): boolean {
   const text = err instanceof Error ? err.message : String(err);
@@ -81,17 +115,16 @@ export async function cancelOwn(
   const me = exchange.walletAddress as Address | undefined;
   if (!me) return 0;
   // Chain head, not the indexer: a quote placed seconds ago must be cancellable.
+  // One batch transaction, so a browser wallet asks once.
   const ids = await exchange.client.getOwnOpenOrdersOnchain(window.pool as Address, me);
-  let n = 0;
-  for (const id of ids) {
-    try {
-      await exchange.trader.cancelOrder({ pool: window.pool, orderId: id.toString() });
-      n += 1;
-    } catch (err) {
-      console.warn("cancel failed", id.toString(), err);
-    }
+  if (ids.length === 0) return 0;
+  try {
+    await exchange.trader.cancelOrders({ pool: window.pool as Address, orderIds: ids });
+    return ids.length;
+  } catch (err) {
+    console.warn("batch cancel failed", err);
+    return 0;
   }
-  return n;
 }
 
 export type Resting = { orderId: bigint; isBid: boolean; price: bigint; quantity: bigint };
@@ -116,21 +149,22 @@ export async function quoteBothSides(
   exchange: SomniaMarkets,
   window: HouseWindow,
   plan: QuotePlan,
-): Promise<{ upId?: string; downId?: string; skipped: string[] }> {
+): Promise<{ upId?: string; downId?: string; skipped: string[]; simulated: boolean }> {
   const skipped: string[] = [];
+  let simulated = false;
   const params = await exchange.client.getBinaryBookParams(window.pool);
   const decimals = window.quoteDecimals;
   const qty = snapLot(fromHuman(plan.size, decimals), params.lotSize);
   if (qty === 0n) {
     skipped.push("size below one lot");
-    return { skipped };
+    return { skipped, simulated };
   }
 
   const bidRaw = snapTick(probabilityToPrice(plan.bidYes, decimals), params.tickSize);
   const askRaw = snapTick(probabilityToPrice(plan.askYes, decimals), params.tickSize);
   if (bidRaw <= 0n || askRaw <= 0n || bidRaw >= askRaw) {
     skipped.push("prices collapsed onto one tick");
-    return { skipped };
+    return { skipped, simulated };
   }
 
   const onchain = await exchange.client.getMarketOnchain(window.marketId);
@@ -139,19 +173,55 @@ export async function quoteBothSides(
   const hold = Math.min(300, Math.max(60, Math.floor(window.intervalSec * 0.3)));
   const expiry = expireNs(Number(onchain.expiry), hold);
   const pool = window.pool as Address;
+  const me = exchange.walletAddress as Address;
+
+  const upParams = {
+    pool,
+    side: "BUY_YES" as const,
+    price: bidRaw,
+    quantity: qty,
+    orderType: ORDER_TYPE.POST_ONLY,
+    expireTimestampNs: expiry,
+  };
+  const downParams = {
+    pool,
+    side: "BUY_NO" as const,
+    // BUY_NO price is YES terms: this is the implied Up ask, not a Down probability.
+    price: askRaw,
+    quantity: qty,
+    orderType: ORDER_TYPE.POST_ONLY,
+    expireTimestampNs: expiry,
+  };
+
+  // Simulate both sides first. Nothing is signed if either would cross, so a
+  // browser wallet never sees a doomed transaction. The pool only answers
+  // once it can pull collateral, so on a pool this wallet has never approved
+  // the first quote falls through to the send path, which approves.
+  const allowance = await sim.readContract({
+    address: TUSDC,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: [me, pool],
+  });
+  if (allowance >= qty * 2n) {
+    const [upCall, downCall] = await Promise.all([
+      exchange.trader.buildPlaceOrder(upParams),
+      exchange.trader.buildPlaceOrder(downParams),
+    ]);
+    const [su, sd] = await Promise.all([simulate(me, upCall.order), simulate(me, downCall.order)]);
+    simulated = true;
+    if (su === "cross") skipped.push("Up would cross");
+    if (sd === "cross") skipped.push("Down would cross");
+    if (skipped.length) return { skipped, simulated };
+    if (su !== "ok") throw new Error(su);
+    if (sd !== "ok") throw new Error(sd);
+  }
 
   let upId: string | undefined;
   let downId: string | undefined;
 
   try {
-    const up = await exchange.trader.placeOrder({
-      pool,
-      side: "BUY_YES",
-      price: bidRaw,
-      quantity: qty,
-      orderType: ORDER_TYPE.POST_ONLY,
-      expireTimestampNs: expiry,
-    });
+    const up = await exchange.trader.placeOrder(upParams);
     if (!receiptOk(up)) skipped.push("Up quote reverted");
     else upId = up.orderId?.toString();
   } catch (err) {
@@ -160,15 +230,7 @@ export async function quoteBothSides(
   }
 
   try {
-    const down = await exchange.trader.placeOrder({
-      pool,
-      side: "BUY_NO",
-      // BUY_NO price is YES terms: this is the implied Up ask, not a Down probability.
-      price: askRaw,
-      quantity: qty,
-      orderType: ORDER_TYPE.POST_ONLY,
-      expireTimestampNs: expiry,
-    });
+    const down = await exchange.trader.placeOrder(downParams);
     if (!receiptOk(down)) skipped.push("Down quote reverted");
     else downId = down.orderId?.toString();
   } catch (err) {
@@ -176,19 +238,26 @@ export async function quoteBothSides(
     else throw err;
   }
 
-  return { upId, downId, skipped };
+  return { upId, downId, skipped, simulated };
 }
 
-export type QuoteOutcome = { plan: QuotePlan | null; upId?: string; downId?: string; skipped: string[] };
+export type QuoteOutcome = {
+  plan: QuotePlan | null;
+  upId?: string;
+  downId?: string;
+  skipped: string[];
+  simulated?: boolean;
+};
 
-// A side that would cross means the book moved between plan and placement.
-// Start over from a fresh book rather than leave one side resting alone.
+// A side that would cross means the book moved since the plan. The
+// simulation catches it before anything is sent, so a retry is only a fresh
+// plan. If a sent order still reverts, cancel what rested and start over.
 export async function quoteWithRetry(
   exchange: SomniaMarkets,
   window: HouseWindow,
   halfSpread = DEFAULT_HALF_SPREAD,
   size = DEFAULT_QUOTE_SIZE,
-  attempts = 3,
+  attempts = 4,
 ): Promise<QuoteOutcome> {
   let out: QuoteOutcome = { plan: null, skipped: [] };
   for (let i = 0; i < attempts; i++) {
@@ -197,7 +266,7 @@ export async function quoteWithRetry(
     const r = await quoteBothSides(exchange, window, plan);
     out = { plan, ...r };
     if (!r.skipped.some((s) => s.includes("would cross"))) break;
-    await cancelOwn(exchange, window);
+    if (r.upId || r.downId) await cancelOwn(exchange, window);
   }
   return out;
 }

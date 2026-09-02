@@ -52,6 +52,7 @@ async function tick(exchange: ReturnType<typeof createSignedExchange>, lastId: s
     upId: result.upId ?? null,
     downId: result.downId ?? null,
     skipped: result.skipped,
+    simulated: result.simulated ?? false,
     book: await topOfBook(exchange, live),
   });
   return live.marketId;
