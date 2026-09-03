@@ -1,10 +1,14 @@
 <div align="center">
 
+<img src="web/public/house-logo-1024.png" width="112" alt="HOUSE, The Pair mark">
+
 # HOUSE
 
 **Be the book. Quote both sides of a DreamDEX window from a normal wallet.**
 
 Post two prices, wait for takers, keep the gap. No side to pick, no tokens to start, no vault in between.
+
+Live at [bethebook.xyz](https://bethebook.xyz), desk at [bethebook.xyz/desk](https://bethebook.xyz/desk).
 
 [![Somnia Shannon](https://img.shields.io/badge/Somnia-Shannon%2050312-e8a060)](https://docs.somnia.network/)
 [![DreamDEX Event Contracts](https://img.shields.io/badge/DreamDEX-Event%20Contracts-6fa0bf)](https://dorahacks.io/hackathon/event-contracts/detail)

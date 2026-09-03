@@ -20,11 +20,11 @@ function siteUrl(): URL {
     process.env.NEXT_PUBLIC_SITE_URL ??
     process.env.VERCEL_PROJECT_PRODUCTION_URL ??
     process.env.VERCEL_URL ??
-    "house-desk.vercel.app";
+    "www.bethebook.xyz";
   try {
     return new URL(/^https?:\/\//.test(raw) ? raw : `https://${raw}`);
   } catch {
-    return new URL("https://house-desk.vercel.app");
+    return new URL("https://www.bethebook.xyz");
   }
 }
 
