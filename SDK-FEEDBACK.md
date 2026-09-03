@@ -16,15 +16,29 @@ Notes from a week on Shannon building a two-sided quoter for Event Contracts. Ev
 
 6. **`ImmediateOrCancelNoFill` surfaces as a thrown error from a resolved write.** Fine, but the sibling gotcha is that other reverts resolve with `receipt.status === "reverted"` instead of throwing. A consistent rule, or a helper that throws on any revert, would be easier to build on.
 
+7. **Recycled pools keep dead orders, and `getOwnOpenOrdersOnchain` returns them.** Expiry is lazy on chain, so after a window rolls, the pool still lists the previous window's expired orders under the same owner. Our taker read a 0.480 bid from an hour earlier as the live quote and swept 990 contracts to reach it. `getOrderOnchain` does expose `expireTimestampNs`, so the fix is one filter, but the docs for the ids call say nothing about expired entries. Either filter them in the wrapper or say loudly that the caller must.
+
+8. **No way to approve collateral before simulating.** We simulate every order with `eth_call` before asking a wallet to sign, which is what makes the desk safe. But the pool reverts the call until the collateral allowance exists, and the only approval path is the one inside `placeOrder`, which sends the order right after. `buildPlaceOrder().approval` is always populated and does not check the chain. We ended up holding our own wallet client just to send one `approve`. The writer already has `approveIfNeeded`; exposing it on the trader would remove that.
+
+9. **A series alternates between two pools.** BTC 15m ran on two pool addresses in turn, one per window, so a fresh allowance was needed on each and a per-pool cache had to be keyed by both. The docs say pools are recycled, not that a series uses more than one.
+
+10. **`getFills(pool, { market })` did not narrow to the market for us.** The rows came back from the pool's earlier lives too and we filtered on the row's own `market` field. The rows themselves are excellent, see below.
+
+11. **Windows exit assertion.** Leaving the process while the SDK's websocket is open prints `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` from libuv on Windows. Harmless, alarming, and we did not find a documented `close()` to call first.
+
 ## Things that worked well
 
 - `getOrderOnchain` and `getOwnOpenOrdersOnchain` read our own writes in the same block. This is what made cancel and replace reliable.
 - `burnSet` with `autoApprove` merged a filled pair back to collateral in one call.
 - `getBinaryOrderBook` with `decimals` gave usable human prices without extra plumbing.
-- `PostOnlyWouldCross` is a clean signal to re-plan from a fresh book.
+- `PostOnlyWouldCross` is a clean signal to re-plan from a fresh book, and `eth_call` on `buildPlaceOrder().order` returns that selector before anything is signed. That preview is the core of the desk's safety.
+- `getUserFills` and `getFills` rows carry `kind` (`MINT_A_PAIR`, `DIRECT_YES`, `BURN_A_PAIR`), both sides, both parties and the tx hash. Reconstructing what happened to a quote took one call, once the indexer caught up.
 - The React hooks armed a live book and price on the desk with almost no code.
 
-## Two asks
+## Asks
 
 - A documented recipe for the mint-a-pair path from the maker's side: rest BUY_YES below mid and BUY_NO above it in YES terms, keep the sum under one, merge the resulting pair. It is the most interesting thing the venue does and it is not spelled out.
-- A `wouldRest` style preview for PostOnly, so a quoter can know before sending whether the order would cross at chain head.
+- `trader.approveIfNeeded(token, spender)` as a public verb, so an app can approve first and simulate everything after.
+- Filter expired orders out of `getOwnOpenOrdersOnchain`, or return the expiry alongside the ids.
+- A note in the write docs that a simulation is only as good as the block it ran on. Router based takers on Shannon flip the book every few blocks, so a PostOnly that simulated clean can still cross at inclusion. The app has to re-check the second side right before its own send.
+- A `close()` on the client for scripts that want to exit cleanly.
