@@ -254,25 +254,29 @@ export async function quoteBothSides(
   let upId: string | undefined;
   let downId: string | undefined;
 
+  // The second side is only sent once the first one rests. A send that still
+  // reverts lost a race with another order between simulation and inclusion;
+  // the caller re-plans that side rather than posting the other side alone.
   if (upOk) {
     try {
       const up = await exchange.trader.placeOrder(upParams);
-      if (!receiptOk(up)) skipped.push("Up quote reverted");
+      if (!receiptOk(up)) skipped.push("Up reverted");
       else upId = up.orderId?.toString();
     } catch (err) {
-      if (reverted(err)) skipped.push("Up quote reverted");
+      if (reverted(err)) skipped.push("Up reverted");
       else throw err;
     }
+    if (!upId) return { skipped, simulated };
   }
 
   if (downOk) {
     if (upOk && !(await gate(downParams, "Down"))) return { upId, skipped, simulated };
     try {
       const down = await exchange.trader.placeOrder(downParams);
-      if (!receiptOk(down)) skipped.push("Down quote reverted");
+      if (!receiptOk(down)) skipped.push("Down reverted");
       else downId = down.orderId?.toString();
     } catch (err) {
-      if (reverted(err)) skipped.push("Down quote reverted");
+      if (reverted(err)) skipped.push("Down reverted");
       else throw err;
     }
   }
@@ -288,10 +292,9 @@ export type QuoteOutcome = {
   simulated?: boolean;
 };
 
-// A side that would cross means the book moved since the plan. It was never
-// sent, so the retry is a fresh plan for that side only; whatever already
-// rests stays. A sent order that reverted stops the loop, no cancel, no
-// second signature for the same side.
+// A side that is missing after an attempt, whether it would have crossed
+// (never sent) or lost the race after sending, gets a fresh plan for that side
+// only. Whatever already rests stays; nothing is cancelled inside the loop.
 export async function quoteWithRetry(
   exchange: SomniaMarkets,
   window: HouseWindow,
@@ -309,8 +312,7 @@ export async function quoteWithRetry(
     upId = r.upId ?? upId;
     downId = r.downId ?? downId;
     out = { plan, upId, downId, skipped: r.skipped, simulated: r.simulated };
-    if (!r.skipped.some((s) => s.includes("would cross"))) break;
-    if (r.skipped.some((s) => s.includes("reverted"))) break;
+    if ((upId && downId) || r.skipped.length === 0) break;
   }
   return out;
 }

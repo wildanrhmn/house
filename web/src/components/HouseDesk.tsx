@@ -357,8 +357,10 @@ export function HouseDesk() {
             `Your prices are up: ${result.plan.bidYes.toFixed(3)} for UP, ${(1 - result.plan.askYes).toFixed(3)} for DOWN. Waiting for takers.`,
             "up",
           );
+        } else if (result.upId || result.downId) {
+          log(`Only ${result.upId ? "UP" : "DOWN"} is posted. The other side kept moving under the signature. Try again in a moment.`, "warn");
         } else {
-          log(`Only one side posted. ${result.skipped.join(". ")}.`, "warn");
+          log("Nothing posted. The book moved faster than the signature every time. Try again in a moment.", "warn");
         }
       } else if (label === "flatten" && live) {
         const out = await flattenInventory(signed, live);
