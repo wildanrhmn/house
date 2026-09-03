@@ -6,7 +6,15 @@ import {
   type PlaceOrderResult,
   type SomniaMarkets,
 } from "@somnia-chain/markets-sdk";
-import { createPublicClient, erc20Abi, http, toFunctionSelector, type Address, type Hex } from "viem";
+import {
+  createPublicClient,
+  erc20Abi,
+  http,
+  maxUint256,
+  toFunctionSelector,
+  type Address,
+  type Hex,
+} from "viem";
 import {
   CHAIN,
   DREAMDEX_VENUE,
@@ -17,6 +25,7 @@ import {
   minLeftSec,
 } from "./config";
 import type { HouseWindow } from "./discover";
+import { signerFor } from "./exchange";
 import { expireNs, fairYes, snapLot, snapTick, twoSidedLevels } from "./quoting";
 
 type Onchain = Awaited<ReturnType<SomniaMarkets["client"]["getMarketOnchain"]>>;
@@ -56,6 +65,28 @@ function receiptOk(info: unknown): boolean {
   const receipt = (info as PlaceOrderResult | undefined)?.receipt;
   if (!receipt) return true;
   return receipt.status === "success";
+}
+
+// The pool only answers a simulation once it can pull collateral, so a new
+// pool gets one unlimited approval up front, as its own signature. Returns
+// whether the allowance now covers the quote.
+async function ensureAllowance(exchange: SomniaMarkets, pool: Address, need: bigint): Promise<boolean> {
+  const me = exchange.walletAddress as Address;
+  const read = () =>
+    sim.readContract({ address: TUSDC, abi: erc20Abi, functionName: "allowance", args: [me, pool] });
+  if ((await read()) >= need) return true;
+  const wallet = signerFor(exchange);
+  if (!wallet) return false;
+  const hash = await wallet.writeContract({
+    address: TUSDC,
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [pool, maxUint256],
+    account: wallet.account ?? me,
+    chain: CHAIN,
+  });
+  await sim.waitForTransactionReceipt({ hash });
+  return (await read()) >= need;
 }
 
 async function outcomeBalances(exchange: SomniaMarkets, oc: Onchain, account: Address) {
@@ -145,10 +176,13 @@ export async function restingQuotes(exchange: SomniaMarkets, pool: Address, owne
   return { orders, bid, ask };
 }
 
+export type Sides = { up: boolean; down: boolean };
+
 export async function quoteBothSides(
   exchange: SomniaMarkets,
   window: HouseWindow,
   plan: QuotePlan,
+  sides: Sides = { up: true, down: true },
 ): Promise<{ upId?: string; downId?: string; skipped: string[]; simulated: boolean }> {
   const skipped: string[] = [];
   let simulated = false;
@@ -193,49 +227,54 @@ export async function quoteBothSides(
     expireTimestampNs: expiry,
   };
 
-  // Simulate both sides first. Nothing is signed if either would cross, so a
-  // browser wallet never sees a doomed transaction. The pool only answers
-  // once it can pull collateral, so on a pool this wallet has never approved
-  // the first quote falls through to the send path, which approves.
-  const allowance = await sim.readContract({
-    address: TUSDC,
-    abi: erc20Abi,
-    functionName: "allowance",
-    args: [me, pool],
-  });
-  if (allowance >= qty * 2n) {
-    const [upCall, downCall] = await Promise.all([
-      exchange.trader.buildPlaceOrder(upParams),
-      exchange.trader.buildPlaceOrder(downParams),
-    ]);
-    const [su, sd] = await Promise.all([simulate(me, upCall.order), simulate(me, downCall.order)]);
+  // Every side is simulated before anything is signed, and the second side
+  // again right before its own send, since a signature can take a while and
+  // the book moves. A side that would cross is never sent: "would cross" in
+  // skipped means no signature was spent on it.
+  const canSimulate = await ensureAllowance(exchange, pool, qty * 2n);
+  type Side = typeof upParams | typeof downParams;
+  const check = async (p: Side): Promise<"ok" | "cross" | string> =>
+    simulate(me, (await exchange.trader.buildPlaceOrder(p)).order);
+  const gate = async (p: Side, name: string): Promise<boolean> => {
+    if (!canSimulate) return true;
+    const s = await check(p);
     simulated = true;
-    if (su === "cross") skipped.push("Up would cross");
-    if (sd === "cross") skipped.push("Down would cross");
-    if (skipped.length) return { skipped, simulated };
-    if (su !== "ok") throw new Error(su);
-    if (sd !== "ok") throw new Error(sd);
-  }
+    if (s === "cross") {
+      skipped.push(`${name} would cross`);
+      return false;
+    }
+    if (s !== "ok") throw new Error(s);
+    return true;
+  };
+
+  const upOk = sides.up ? await gate(upParams, "Up") : false;
+  const downOk = sides.down ? await gate(downParams, "Down") : false;
+  if (skipped.length) return { skipped, simulated };
 
   let upId: string | undefined;
   let downId: string | undefined;
 
-  try {
-    const up = await exchange.trader.placeOrder(upParams);
-    if (!receiptOk(up)) skipped.push("Up quote reverted");
-    else upId = up.orderId?.toString();
-  } catch (err) {
-    if (reverted(err)) skipped.push("Up would cross");
-    else throw err;
+  if (upOk) {
+    try {
+      const up = await exchange.trader.placeOrder(upParams);
+      if (!receiptOk(up)) skipped.push("Up quote reverted");
+      else upId = up.orderId?.toString();
+    } catch (err) {
+      if (reverted(err)) skipped.push("Up quote reverted");
+      else throw err;
+    }
   }
 
-  try {
-    const down = await exchange.trader.placeOrder(downParams);
-    if (!receiptOk(down)) skipped.push("Down quote reverted");
-    else downId = down.orderId?.toString();
-  } catch (err) {
-    if (reverted(err)) skipped.push("Down would cross");
-    else throw err;
+  if (downOk) {
+    if (upOk && !(await gate(downParams, "Down"))) return { upId, skipped, simulated };
+    try {
+      const down = await exchange.trader.placeOrder(downParams);
+      if (!receiptOk(down)) skipped.push("Down quote reverted");
+      else downId = down.orderId?.toString();
+    } catch (err) {
+      if (reverted(err)) skipped.push("Down quote reverted");
+      else throw err;
+    }
   }
 
   return { upId, downId, skipped, simulated };
@@ -249,9 +288,10 @@ export type QuoteOutcome = {
   simulated?: boolean;
 };
 
-// A side that would cross means the book moved since the plan. The
-// simulation catches it before anything is sent, so a retry is only a fresh
-// plan. If a sent order still reverts, cancel what rested and start over.
+// A side that would cross means the book moved since the plan. It was never
+// sent, so the retry is a fresh plan for that side only; whatever already
+// rests stays. A sent order that reverted stops the loop, no cancel, no
+// second signature for the same side.
 export async function quoteWithRetry(
   exchange: SomniaMarkets,
   window: HouseWindow,
@@ -260,13 +300,17 @@ export async function quoteWithRetry(
   attempts = 4,
 ): Promise<QuoteOutcome> {
   let out: QuoteOutcome = { plan: null, skipped: [] };
+  let upId: string | undefined;
+  let downId: string | undefined;
   for (let i = 0; i < attempts; i++) {
     const plan = await planQuotes(exchange, window, halfSpread, size);
     if (!plan) break;
-    const r = await quoteBothSides(exchange, window, plan);
-    out = { plan, ...r };
+    const r = await quoteBothSides(exchange, window, plan, { up: !upId, down: !downId });
+    upId = r.upId ?? upId;
+    downId = r.downId ?? downId;
+    out = { plan, upId, downId, skipped: r.skipped, simulated: r.simulated };
     if (!r.skipped.some((s) => s.includes("would cross"))) break;
-    if (r.upId || r.downId) await cancelOwn(exchange, window);
+    if (r.skipped.some((s) => s.includes("reverted"))) break;
   }
   return out;
 }

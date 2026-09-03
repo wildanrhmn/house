@@ -27,7 +27,7 @@ HOUSE turns it into one button and a wallet signature. The quotes are real order
 
 | On the desk | What it does |
 |---|---|
-| **Quote both sides** | Rests a buy for UP and a buy for DOWN, one tick inside the market, sized as you set. Both orders are simulated against the pool before anything is signed, so a quote that would cross is re-planned instead of sent. |
+| **Quote both sides** | Rests a buy for UP and a buy for DOWN, one tick inside the market, sized as you set. Both orders are simulated against the pool before anything is signed, and the second again right before its own send, so a quote that would cross is re-planned instead of sent. Two signatures. A pool you have never used adds one approval, resting quotes add one batch cancel. |
 | **Cash out** | Cancels resting quotes, hands every YES and NO pair back to the pool for 1.00 each, sells any unmatched leftover at the market. |
 | **Collect payouts** | Redeems winning tokens from windows that already settled. |
 | **Take down** | Cancels your resting prices, in one batch transaction. |
