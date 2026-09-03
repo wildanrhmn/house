@@ -161,18 +161,24 @@ export async function cancelOwn(
 export type Resting = { orderId: bigint; isBid: boolean; price: bigint; quantity: bigint };
 
 // An owner's resting quotes read at chain head. BUY_YES rests as a bid and
-// BUY_NO as an ask on the YES book, so the lower price is the bid.
+// BUY_NO as an ask on the YES book. Expiry is lazy on chain, so a pool that
+// was recycled from an earlier window still lists that window's dead orders;
+// they are skipped here so a stale price never poses as the live quote.
 export async function restingQuotes(exchange: SomniaMarkets, pool: Address, owner: Address) {
   const ids = await exchange.client.getOwnOpenOrdersOnchain(pool, owner);
+  const nowNs = BigInt(Date.now()) * 1_000_000n;
   const orders: Resting[] = [];
   for (const id of ids) {
     const o = await exchange.client.getOrderOnchain(pool, id);
     if (!o || o.quantityRemaining === 0n) continue;
+    if (o.expireTimestampNs !== 0n && o.expireTimestampNs <= nowNs) continue;
     orders.push({ orderId: id, isBid: o.isBid, price: o.price, quantity: o.quantityRemaining });
   }
   orders.sort((a, b) => (a.price < b.price ? -1 : a.price > b.price ? 1 : 0));
-  const bid = orders.length ? orders[0] : undefined;
-  const ask = orders.length > 1 ? orders[orders.length - 1] : undefined;
+  const bids = orders.filter((o) => o.isBid);
+  const asks = orders.filter((o) => !o.isBid);
+  const bid = bids.length ? bids[bids.length - 1] : undefined;
+  const ask = asks.length ? asks[0] : undefined;
   return { orders, bid, ask };
 }
 

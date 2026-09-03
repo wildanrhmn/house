@@ -211,7 +211,7 @@ npm run dev            # landing on :3000, desk on :3000/desk
 | Command | Does |
 |---|---|
 | `npm run quote` | Maker loop. Requotes about every 20s, one tick inside the market. `HOUSE_HALF_SPREAD` and `HOUSE_SIZE` tune it. `--once` places one quote and exits. |
-| `npm run take` | Demo taker. Crosses both resting quotes. `--dry` plans only, `--faucet` mints tUSDC first, `--faucet-only` stops there. |
+| `npm run take` | Demo taker. Crosses whatever HOUSE has resting, sized to sweep any depth posted in front. `--watch` waits for the quote and fires within seconds of it resting, which is how to run it beside the desk. `--dry` plans only, `--faucet` mints tUSDC first, `--faucet-only` stops there. |
 | `npm run flatten` | Maker cash out from Node. `--dry` prints inventory and collateral. |
 | `npm run demo` | The whole loop in one process. Rounds until the maker holds a pair, then flattens. `--keep` leaves the pair in the wallet so the desk can show it. |
 
