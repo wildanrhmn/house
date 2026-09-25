@@ -37,12 +37,25 @@ async function liveWindow(exchange: Ex): Promise<HouseWindow | null> {
   return oc.status === 1 ? live : null;
 }
 
+// Holdings when the watcher first saw a window. A side counts as taken only
+// by what filled after that, so pairs already held never read as a fill.
+const baseline = new Map<string, { up: bigint; down: bigint }>();
+
 async function observe(taker: Ex, makerEx: Ex, maker: Address, live: HouseWindow): Promise<State> {
   const [held, r] = await Promise.all([
     readInventory(makerEx, live),
     restingQuotes(taker, live.pool as Address, maker),
   ]);
-  return { live, bid: r.bid, ask: r.ask, up: held.up, down: held.down, want: fromHuman(SIZE, live.quoteDecimals) };
+  if (!baseline.has(live.marketId)) baseline.set(live.marketId, { up: held.up, down: held.down });
+  const base = baseline.get(live.marketId)!;
+  return {
+    live,
+    bid: r.bid,
+    ask: r.ask,
+    up: held.up - base.up,
+    down: held.down - base.down,
+    want: fromHuman(SIZE, live.quoteDecimals),
+  };
 }
 
 // Fire when both sides rest, or when one rests and the other was already
@@ -56,7 +69,7 @@ function describe(s: State): string {
   const d = s.live.quoteDecimals;
   const h = (v: bigint) => Number(toHuman(v, d)).toFixed(3);
   const px = (o?: Resting) => (o ? `${h(o.price)} x ${h(o.quantity)}` : "-");
-  return `window ${s.live.marketId.slice(-6)} resting up ${px(s.bid)} down ${px(s.ask)} holds up ${h(s.up)} down ${h(s.down)}`;
+  return `window ${s.live.marketId.slice(-6)} resting up ${px(s.bid)} down ${px(s.ask)} filled since watching up ${h(s.up)} down ${h(s.down)}`;
 }
 
 async function fire(taker: Ex, makerEx: Ex, s: State): Promise<void> {
@@ -125,10 +138,10 @@ async function fire(taker: Ex, makerEx: Ex, s: State): Promise<void> {
 }
 
 async function main() {
-  const taker = createSignedExchange({ privateKey: keyFromEnv("TAKER_KEY") });
+  let taker = createSignedExchange({ privateKey: keyFromEnv("TAKER_KEY") });
   const me = taker.walletAddress as Address | undefined;
   if (!me) throw new Error("taker wallet did not load");
-  const makerEx = createSignedExchange({ privateKey: keyFromEnv("PRIVATE_KEY") });
+  let makerEx = createSignedExchange({ privateKey: keyFromEnv("PRIVATE_KEY") });
   const maker = privateKeyToAccount(keyFromEnv("PRIVATE_KEY")).address;
   console.log("HOUSE take", short(me), "against", short(maker), MARKET.label, DRY ? "dry run" : WATCH ? "watching" : "");
 
@@ -156,6 +169,7 @@ async function main() {
 
   const until = Date.now() + WATCH_MS;
   let last = "";
+  let failures = 0;
   while (Date.now() < until) {
     try {
       const live = await liveWindow(taker);
@@ -164,6 +178,7 @@ async function main() {
         console.log(stamp(), line);
         last = line;
       }
+      failures = 0;
       if (live) {
         const s = await observe(taker, makerEx, maker, live);
         if (ready(s)) {
@@ -173,6 +188,15 @@ async function main() {
       }
     } catch (err) {
       console.log(stamp(), "poll failed:", err instanceof Error ? err.message.split("\n")[0] : String(err));
+      // The SDK has one WebSocket for every chain read and no HTTP fallback.
+      // A socket that goes quiet never recovers, so open fresh clients.
+      failures += 1;
+      if (failures >= 2) {
+        console.log(stamp(), "reconnecting");
+        taker = createSignedExchange({ privateKey: keyFromEnv("TAKER_KEY") });
+        makerEx = createSignedExchange({ privateKey: keyFromEnv("PRIVATE_KEY") });
+        failures = 0;
+      }
     }
     await sleep(2000);
   }
