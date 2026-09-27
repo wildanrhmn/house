@@ -170,6 +170,7 @@ async function main() {
   const until = Date.now() + WATCH_MS;
   let last = "";
   let failures = 0;
+  let shots = 0;
   while (Date.now() < until) {
     try {
       const live = await liveWindow(taker);
@@ -181,9 +182,21 @@ async function main() {
       failures = 0;
       if (live) {
         const s = await observe(taker, makerEx, maker, live);
-        if (ready(s)) {
-          await fire(taker, makerEx, s);
+        // Done once both sides have filled, or once HOUSE stops resting
+        // anything after a take. A bot can jump in front of one leg, so a
+        // side still resting after a shot gets another one.
+        const filled = s.up >= s.want && s.down >= s.want;
+        if (filled || (shots > 0 && !s.bid && !s.ask)) {
+          console.log(stamp(), filled ? "both sides filled" : "HOUSE has nothing left resting");
           return;
+        }
+        if (ready(s)) {
+          if (shots >= 4) {
+            console.log(stamp(), "four shots taken, stopping");
+            return;
+          }
+          shots += 1;
+          await fire(taker, makerEx, s);
         }
       }
     } catch (err) {
