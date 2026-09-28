@@ -214,6 +214,7 @@ npm run dev            # landing on :3000, desk on :3000/desk
 | `npm run take` | Demo taker. Crosses whatever HOUSE has resting, sized to sweep any depth posted in front. `--watch` waits for the quote and fires within seconds of it resting, which is how to run it beside the desk. `--dry` plans only, `--faucet` mints tUSDC first, `--faucet-only` stops there. |
 | `npm run flatten` | Maker cash out from Node. `--dry` prints inventory and collateral. |
 | `npm run demo` | The whole loop in one process. Rounds until the maker holds a pair, then flattens. `--keep` leaves the pair in the wallet so the desk can show it. |
+| `npm run relay` | Local stand-in for the Shannon WebSocket RPC, forwarding over HTTP. Only used when `WS_RPC_URL` (scripts) or `NEXT_PUBLIC_WS_RPC_URL` (desk) is set to `ws://127.0.0.1:8546`, for days when the public socket is down. |
 
 `HOUSE_MARKET=eth-1h` points any of them at another market, same keys as the desk URL. Default BTC 15m.
 

@@ -11,10 +11,12 @@
   "dependencies": {
     "@somnia-chain/markets-sdk": "0.29.0",
     "tsx": "^4.20.5",
-    "viem": "^2.31.0"
+    "viem": "^2.31.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^24.3.1",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.9.2"
   }
 }

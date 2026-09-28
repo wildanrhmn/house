@@ -6,7 +6,10 @@ import {
 import { somniaShannon } from "@somnia-chain/markets-sdk/chains";
 
 export const INDEXER_URL = "https://dev.smk.somnia.host/v1/graphql";
-export const WS_RPC_URL = "wss://api.infra.testnet.somnia.network/ws";
+// Default is the public Shannon socket. Set NEXT_PUBLIC_WS_RPC_URL (desk) or
+// WS_RPC_URL (scripts) to ws://127.0.0.1:8546 to go through npm run relay.
+export const WS_RPC_URL =
+  process.env.NEXT_PUBLIC_WS_RPC_URL || process.env.WS_RPC_URL || "wss://api.infra.testnet.somnia.network/ws";
 export const HTTP_RPC_URL = "https://dream-rpc.somnia.network";
 
 export const CHAIN = somniaShannon;

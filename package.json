@@ -1,12 +1,16 @@
 {
   "name": "house",
   "private": true,
-  "workspaces": ["web", "quote"],
+  "workspaces": [
+    "web",
+    "quote"
+  ],
   "scripts": {
     "dev": "npm run dev -w web",
     "quote": "tsx quote/src/index.ts",
     "take": "tsx quote/src/take.ts",
     "flatten": "tsx quote/src/flatten.ts",
-    "demo": "tsx quote/src/demo.ts"
+    "demo": "tsx quote/src/demo.ts",
+    "relay": "tsx quote/src/relay.ts"
   }
 }
