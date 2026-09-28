@@ -11,6 +11,8 @@
     "take": "tsx quote/src/take.ts",
     "flatten": "tsx quote/src/flatten.ts",
     "demo": "tsx quote/src/demo.ts",
-    "relay": "tsx quote/src/relay.ts"
+    "relay": "tsx quote/src/relay.ts",
+    "showcase": "tsx quote/src/showcase.ts",
+    "showcase:stop": "tsx quote/src/showcase-stop.ts"
   }
 }
