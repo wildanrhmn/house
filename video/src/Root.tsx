@@ -1,6 +1,7 @@
 import { Composition, Still } from "remotion";
 import { HouseDemo, TOTAL } from "./HouseDemo";
 import { Card1, Card2, Card3, Card4 } from "./cards/Cards";
+import { Cover } from "./cards/Cover";
 
 export const RemotionRoot: React.FC = () => (
   <>
@@ -9,5 +10,6 @@ export const RemotionRoot: React.FC = () => (
     <Still id="Card2" component={Card2} width={1920} height={1080} />
     <Still id="Card3" component={Card3} width={1920} height={1080} />
     <Still id="Card4" component={Card4} width={1920} height={1080} />
+    <Still id="Cover" component={Cover} width={1500} height={500} />
   </>
 );
